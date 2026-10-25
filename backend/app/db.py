@@ -112,7 +112,13 @@ except Exception as e:
             self.renders = MemoryCollection("renders")
             self.publications = MemoryCollection("publications")
             self.metrics = MemoryCollection("metrics")
+            self.analytics = MemoryCollection("analytics")
             self.settings = MemoryCollection("settings")
+
+        def __getattr__(self, name):
+            coll = MemoryCollection(name)
+            setattr(self, name, coll)
+            return coll
 
     db = MemoryDB()
 

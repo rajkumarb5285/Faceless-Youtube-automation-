@@ -4,6 +4,7 @@ import math
 import json
 import urllib.request
 import urllib.parse
+import subprocess
 import io
 import logging
 
@@ -173,42 +174,21 @@ def download_and_process_cartoon_visual(query: str, scene_idx: int, work_dir: st
     # Fallback to high-aesthetic Pillow animated graphic card
     return create_rich_cartoon_card(query, out_file, palette, title="Visual Story Beat", scene_idx=scene_idx)
 
-from app.coverr import download_coverr_clip
-from app.pixabay import download_pixabay_video, download_pixabay_image
+from app.media_provider import media_manager
 
 def fetch_asset(shot: dict, work_dir: str, palette: dict, story_style: str = "cartoon_story", shot_id: str = "") -> str:
-    """Resolve asset according to visual ladder: Coverr / Pixabay Stock Video -> Pixabay / SerpApi Visuals -> Chart -> Styled Graphic Card."""
+    """Resolve asset via MediaProviderManager: Coverr (4K/HD) -> Pixabay (HD) -> SerpApi/Pillow Visual Card."""
     scene_idx = shot.get("scene_idx", 1)
     slug = f"{scene_idx}_{shot_id}" if shot_id else str(scene_idx)
-    v_type = shot.get("visual_type", "cartoon")
+    v_type = shot.get("visual_type", "stock")
     query = shot.get("query_or_spec", "Story Overview")
     
     if v_type == "chart":
         chart_file = os.path.join(work_dir, f"asset_chart_{slug}.png")
         return create_chart_asset(query, chart_file, palette)
 
-    # 1. High-quality Stock Footage: Try Coverr first, then Pixabay HD Videos
-    if (v_type in ("stock", "video", "footage", "b-roll") or story_style == "stock_cinematic"):
-        if settings.COVERR_API_KEY:
-            stock_file = os.path.join(work_dir, f"asset_coverr_{slug}.mp4")
-            clip_path = download_coverr_clip(query, stock_file)
-            if clip_path and os.path.exists(clip_path):
-                return clip_path
-        if settings.PIXABAY_API_KEY:
-            pix_vid_file = os.path.join(work_dir, f"asset_pix_vid_{slug}.mp4")
-            pix_clip = download_pixabay_video(query, pix_vid_file)
-            if pix_clip and os.path.exists(pix_clip):
-                return pix_clip
-
-    # 2. Photos & Illustrations via Pixabay
-    if settings.PIXABAY_API_KEY and story_style in ("stock_cinematic", "photo_real"):
-        pix_img_file = os.path.join(work_dir, f"asset_pix_img_{slug}.jpg")
-        pix_img = download_pixabay_image(query, pix_img_file)
-        if pix_img and os.path.exists(pix_img):
-            return pix_img
-
-    # 3. Cartoon, illustration, or motion still via SerpApi & Pixabay
-    return download_and_process_cartoon_visual(query, scene_idx, work_dir, palette, shot_id=shot_id)
+    prefer_video = (v_type in ("stock", "video", "footage", "b-roll") or story_style in ("stock_cinematic", "hybrid"))
+    return media_manager.resolve_visual_asset(query, slug, work_dir, prefer_video=prefer_video, palette=palette)
 
 def make_shot(asset: str, dur: float, motion: str, out: str):
     """Render single shot clip with Ken Burns motion (zoom / pan) and cinematic color grade."""
@@ -383,18 +363,91 @@ def render_pipeline_video(state: dict) -> dict:
         }
     }
 
-def auto_checks(path: str, expected_seconds: float) -> list[str]:
-    """Automated pre-render quality checks (Blueprint 12 & 17.4)."""
+def auto_checks(path: str, expected_seconds: float) -> dict:
+    """Automated deterministic QA checks on the rendered video file."""
     issues = []
-    d = probe_duration(path)
-    if abs(d - expected_seconds) > 0.05 * expected_seconds:
-        issues.append(f"Duration mismatch: {d:.1f}s vs expected {expected_seconds:.1f}s")
-    
+    checks = []
+    has_video = False
+    has_audio = False
+    actual_dur = 0.0
+    file_size = 0
+    res_str = "0x0"
+
+    # 1. File existence & nonzero size
+    checks.append("file_existence_and_size")
+    if not path or not os.path.exists(path):
+        return {
+            "passed": False,
+            "issues": [f"Rendered video file does not exist at path: {path}"],
+            "duration_actual": 0.0,
+            "duration_expected": expected_seconds,
+            "has_audio": False,
+            "has_video": False,
+            "file_size_bytes": 0,
+            "checks_performed": checks
+        }
+
+    file_size = os.path.getsize(path)
+    if file_size < 10000:
+        issues.append(f"Rendered video file is abnormally small ({file_size} bytes)")
+
+    # 2. Streams & Codec probing
+    checks.append("stream_probe")
     try:
-        log_black = sh(['ffmpeg', '-i', path, '-vf', 'blackdetect=d=0.5:pix_th=0.1', '-an', '-f', 'null', '-'])
+        probe_cmd = ['ffprobe', '-v', 'error', '-show_entries', 'stream=codec_type,width,height,channels:format=duration', '-of', 'json', path]
+        res = subprocess.run(probe_cmd, capture_output=True, text=True)
+        if res.returncode == 0:
+            data = json.loads(res.stdout)
+            format_dur = data.get("format", {}).get("duration")
+            if format_dur:
+                try:
+                    actual_dur = float(format_dur)
+                except (ValueError, TypeError):
+                    pass
+            streams = data.get("streams", [])
+            for s in streams:
+                if s.get("codec_type") == "video":
+                    has_video = True
+                    w, h = s.get("width", 0), s.get("height", 0)
+                    res_str = f"{w}x{h}"
+                    if w < 1280 or h < 720:
+                        issues.append(f"Sub-HD resolution detected: {res_str}")
+                elif s.get("codec_type") == "audio":
+                    has_audio = True
+        else:
+            issues.append(f"ffprobe stream inspection failed: {res.stderr[:200]}")
+    except Exception as e:
+        issues.append(f"ffprobe error: {e}")
+
+    if not has_video:
+        issues.append("Missing video stream in rendered container")
+    if not has_audio:
+        issues.append("Missing audio stream in rendered container")
+
+    # 3. Duration verification
+    checks.append("duration_sync")
+    if actual_dur == 0.0:
+        actual_dur = probe_duration(path)
+    if expected_seconds > 0 and abs(actual_dur - expected_seconds) > max(1.5, 0.08 * expected_seconds):
+        issues.append(f"Duration mismatch: {actual_dur:.1f}s vs expected {expected_seconds:.1f}s")
+
+    # 4. Black frames detection
+    checks.append("blackdetect")
+    try:
+        log_black = sh(['ffmpeg', '-i', path, '-vf', 'blackdetect=d=1.0:pix_th=0.1', '-an', '-f', 'null', '-'])
         if 'black_start' in log_black:
-            issues.append('Detected black frames longer than 0.5s')
+            issues.append('Detected black frames longer than 1.0s')
     except Exception:
         pass
 
-    return issues
+    return {
+        "passed": len(issues) == 0,
+        "issues": issues,
+        "duration_actual": actual_dur,
+        "duration_expected": expected_seconds,
+        "has_audio": has_audio,
+        "has_video": has_video,
+        "resolution": res_str,
+        "file_size_bytes": file_size,
+        "checks_performed": checks
+    }

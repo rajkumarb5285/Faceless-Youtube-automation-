@@ -81,8 +81,31 @@ def write_wav(path: str, pcm: bytes, rate: int = 22050):
         w.setframerate(rate)
         w.writeframes(pcm)
 
+_tts_cache: dict[str, str] = {}
+
+def is_valid_wav(path: str) -> bool:
+    """Validate that the audio file exists, has nonzero size, and valid WAV headers."""
+    try:
+        if not path or not os.path.exists(path) or os.path.getsize(path) < 2000:
+            return False
+        with wave.open(path, 'rb') as w:
+            frames = w.getnframes()
+            rate = w.getframerate()
+            return frames > 0 and rate >= 8000
+    except Exception:
+        return False
+
 def tts(text: str, voice: str = None, job_id: str = "demo", idx: int = 0, lang: str = "en-US", route: dict = None) -> str:
-    """Route TTS request according to channel profile settings with ElevenLabs & Sarvam support."""
+    """Route TTS request with validation, bounded fallback ladder, and cache reuse."""
+    text_clean = text.strip()
+    if not text_clean:
+        text_clean = "Scene transition."
+
+    cache_key = f"{lang}:{voice}:{text_clean}"
+    if cache_key in _tts_cache and is_valid_wav(_tts_cache[cache_key]):
+        logger.info(f"Reusing cached voice clip for scene {idx}")
+        return _tts_cache[cache_key]
+
     out_dir = os.path.join(settings.STORAGE_DIR, job_id)
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"voice_{idx:03d}.wav")
@@ -90,8 +113,11 @@ def tts(text: str, voice: str = None, job_id: str = "demo", idx: int = 0, lang: 
     # Priority 1: ElevenLabs (Hyper-realistic Hollywood narration)
     if settings.ELEVENLABS_API_KEY:
         try:
-            elevenlabs_to_wav(text, voice or (route.get("voice") if route else None) or "pNInz6obpgDQGcFmaJgB", path)
-            return path
+            chosen_voice = voice or (route.get("voice") if route else None) or "pNInz6obpgDQGcFmaJgB"
+            elevenlabs_to_wav(text_clean, chosen_voice, path)
+            if is_valid_wav(path):
+                _tts_cache[cache_key] = path
+                return path
         except Exception as el_err:
             logger.warning(f"ElevenLabs TTS failed ({el_err}). Falling back to Sarvam AI.")
 
@@ -102,16 +128,19 @@ def tts(text: str, voice: str = None, job_id: str = "demo", idx: int = 0, lang: 
             sarvam_voice = voice or (route.get("voice") if route else None) or "aditya"
             if sarvam_voice in ["meera", "standard_voice", None]:
                 sarvam_voice = "aditya"
-            audio_bytes = sarvam_tts(text, lang=sarvam_lang, voice=sarvam_voice, pace=route.get("pace", 1.0) if route else 1.0)
+            audio_bytes = sarvam_tts(text_clean, lang=sarvam_lang, voice=sarvam_voice, pace=route.get("pace", 1.0) if route else 1.0)
             with open(path, "wb") as f:
                 f.write(audio_bytes)
-            logger.info(f"Generated natural voice clip {path} with Sarvam AI ({len(audio_bytes)} bytes)")
-            return path
+            if is_valid_wav(path):
+                logger.info(f"Generated natural voice clip {path} with Sarvam AI ({len(audio_bytes)} bytes)")
+                _tts_cache[cache_key] = path
+                return path
         except Exception as sarv_err:
             logger.warning(f"Sarvam TTS failed ({sarv_err}). Falling back to local synthesizer.")
 
     # Priority 3: Local speech synthesizer
-    words = len(text.split())
+    words = len(text_clean.split())
     estimated_dur = max(2.5, words / 2.5)
     generate_mock_voice_wav(path, duration_sec=estimated_dur)
+    _tts_cache[cache_key] = path
     return path

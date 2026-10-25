@@ -130,25 +130,87 @@ class ChannelProfile(BaseModel):
     target_minutes: int = 8
     upload_schedule: list[str] = Field(default_factory=lambda: ["Tuesday 18:00", "Friday 18:00"])
 
-# LangGraph TypedDict state
+class QualityReport(BaseModel):
+    passed: bool = False
+    issues: list[str] = Field(default_factory=list)
+    duration_actual: float = 0.0
+    duration_expected: float = 0.0
+    has_audio: bool = False
+    has_video: bool = False
+    resolution: str = "1920x1080"
+    file_size_bytes: int = 0
+    checks_performed: list[str] = Field(default_factory=list)
+    width: Optional[int] = 1920
+    height: Optional[int] = 1080
+    duration: Optional[float] = 0.0
+    black_frames: Optional[int] = 0
+
+class HumanApproval(BaseModel):
+    required: bool = False
+    status: Literal["pending", "approved", "rejected", "revision_requested"] = "pending"
+    decision_by: Optional[str] = None
+    feedback: Optional[str] = None
+    timestamp: Optional[str] = None
+    revised_script: Optional[Any] = None
+    action: Optional[str] = None
+    reviewer: Optional[str] = None
+    notes: Optional[str] = None
+
+# LangGraph TypedDict state adhering to Phase Two specifications
 class JobState(TypedDict, total=False):
+    # Core Identifiers & Configurations
     job_id: str
     channel_id: str
-    autonomy: int  # 0..3
-    custom_topic: str
-    custom_content: str
-    story_style: str
+    autonomy: int  # 0: Manual, 1: Script + Final Human Gate, 2: Gate on QA fail only, 3: Full autonomous
+    custom_topic: Optional[str]
+    custom_content: Optional[str]
+    story_style: str  # 'stock_cinematic', 'cartoon_story', 'hybrid'
+    language: str
+    target_audience: str
+    video_format: str
+    target_duration: float
+
+    # Research & Verification
     topic: dict
     research: dict
-    claims: list
+    research_sources: list[dict]
+    claims: list[dict]
+    verified_claims: list[dict]
+
+    # Narrative, Scripting & Approval
     outline: dict
     script: dict
+    script_revision: int
     critic: dict
     rewrite_count: int
-    shots: list
+    human_approval: dict
+
+    # Visual Planning & Assets
+    scene_plan: list[dict]
+    shots: list[dict]
+    visual_assets: list[dict]
+
+    # Audio & Voiceover
     voice: dict
+    narration_assets: list[dict]
+    subtitles: dict
+
+    # Video Assembly & QA
     render: dict
+    render_artifacts: dict
     qa: dict
+    quality_report: dict
+
+    # Distribution & Analytics
     metadata: dict
+    publication_status: dict
     video_id: str
-    error: str
+    learnings: dict
+
+    # Execution Observability & Recovery
+    stage_status: dict[str, str]
+    stage_durations: dict[str, float]
+    errors: list[str]
+    retry_counts: dict[str, int]
+    checkpoint_info: dict
+

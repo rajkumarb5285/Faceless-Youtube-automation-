@@ -42,13 +42,20 @@ def execute_pipeline(job_id: str, channel_id: str, autonomy: int = 1, custom_top
             "story_style": story_style
         }
         
-        # Stream / run nodes
+        # Stream / run nodes until completion or human interrupt
         for event in app_graph.stream(initial_state, cfg, stream_mode="updates"):
             for node_name, state_update in event.items():
                 logger.info(f"[Job {job_id}] Node completed: {node_name}")
                 db.jobs.update_one({'_id': job_id}, {'$set': {'current_node': node_name, 'last_update': node_name}})
         
-        db.jobs.update_one({'_id': job_id}, {'$set': {'status': 'completed'}})
+        # Check if paused at interrupt or finished
+        snap = app_graph.get_state(cfg)
+        if snap and snap.next:
+            next_node = list(snap.next)[0]
+            logger.info(f"[Job {job_id}] Pipeline paused at human gate: {next_node}")
+            db.jobs.update_one({'_id': job_id}, {'$set': {'status': 'waiting_human', 'current_node': next_node}})
+        else:
+            db.jobs.update_one({'_id': job_id}, {'$set': {'status': 'completed', 'current_node': 'analyst'}})
     except Exception as e:
         logger.error(f"[Job {job_id}] Error in pipeline: {e}", exc_info=True)
         db.jobs.update_one({'_id': job_id}, {'$set': {'status': 'failed', 'error': str(e)}})
@@ -64,13 +71,39 @@ def resume_job(job_id: str, decision: dict):
         if decision.get("action") == "edit" and "script" in decision:
             db.scripts.update_one({"job_id": job_id}, {"$set": {"script": decision["script"]}}, upsert=True)
             
-        for event in app_graph.stream({"qa": {"human": decision}}, cfg, stream_mode="updates"):
+        action = decision.get("action", "approve")
+        status_map = {
+            "approve": "approved",
+            "edit": "approved",
+            "reject": "rejected",
+            "request_revision": "revision_requested"
+        }
+        approval_payload = {
+            "status": status_map.get(action, "approved"),
+            "decision_by": decision.get("reviewer", "human_admin"),
+            "feedback": decision.get("feedback", ""),
+            "revised_script": decision.get("script")
+        }
+        
+        # Inject decision into graph state
+        app_graph.update_state(cfg, {"human_approval": approval_payload})
+        db.jobs.update_one({'_id': job_id}, {'$set': {'status': 'running', 'current_node': 'visuals'}})
+
+        # Continue execution stream
+        for event in app_graph.stream(None, cfg, stream_mode="updates"):
             for node_name, state_update in event.items():
-                logger.info(f"[Job {job_id}] Node completed: {node_name}")
+                logger.info(f"[Job {job_id}] Resumed node completed: {node_name}")
                 db.jobs.update_one({'_id': job_id}, {'$set': {'current_node': node_name, 'last_update': node_name}})
-        db.jobs.update_one({'_id': job_id}, {'$set': {'status': 'completed'}})
+                
+        snap = app_graph.get_state(cfg)
+        if snap and snap.next:
+            next_node = list(snap.next)[0]
+            db.jobs.update_one({'_id': job_id}, {'$set': {'status': 'waiting_human', 'current_node': next_node}})
+        else:
+            db.jobs.update_one({'_id': job_id}, {'$set': {'status': 'completed', 'current_node': 'analyst'}})
     except Exception as e:
         logger.error(f"Error resuming job {job_id}: {e}", exc_info=True)
+        db.jobs.update_one({'_id': job_id}, {'$set': {'status': 'failed', 'error': str(e)}})
 
 def resume_job_async(job_id: str, decision: dict):
     """Spawns resume execution in background thread for local dev mode."""

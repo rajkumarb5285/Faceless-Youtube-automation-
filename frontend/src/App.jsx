@@ -113,7 +113,7 @@ export default function App() {
   };
 
   const currentStep = job?.current_node || 'strategist';
-  const isScriptGate = currentStep === 'human_review' || job?.next?.includes('human_review');
+  const isScriptGate = job?.status === 'waiting_human' || currentStep === 'human_review' || job?.next?.includes('human_review');
   const isQAGate = currentStep === 'qa_gate' || job?.next?.includes('qa_gate');
 
   return (
