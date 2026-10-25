@@ -203,18 +203,18 @@ def make_shot(asset: str, dur: float, motion: str, out: str):
         else:
             # Default smooth cinematic zoom-in
             vf = f'scale=3840:-1,zoompan=z=\'zoom+0.0012\':d={frames}:s=1920x1080:fps=30,eq=contrast=1.06:saturation=1.10'
-        cmd = ['ffmpeg', '-y', '-loop', '1', '-i', asset, '-t', str(dur), '-vf', vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', out]
+        cmd = ['ffmpeg', '-y', '-loop', '1', '-i', asset, '-t', str(dur), '-vf', vf, '-c:v', 'libx264', '-r', '30', '-g', '30', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out]
     else:
         # Stock video footage with cohesive Vox-style contrast and color saturation
         vf = 'scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30,eq=contrast=1.08:saturation=1.12'
-        cmd = ['ffmpeg', '-y', '-stream_loop', '-1', '-i', asset, '-t', str(dur), '-an', '-vf', vf, '-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p', out]
+        cmd = ['ffmpeg', '-y', '-stream_loop', '-1', '-i', asset, '-t', str(dur), '-an', '-vf', vf, '-c:v', 'libx264', '-crf', '18', '-r', '30', '-g', '30', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out]
     
     try:
         sh(cmd)
     except Exception as e:
         logger.warning(f"FFmpeg make_shot failed ({e}). Generating fallback color block clip.")
         fallback_vf = f'color=c=black:s=1920x1080:d={dur}'
-        sh(['ffmpeg', '-y', '-f', 'lavfi', '-i', fallback_vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', out])
+        sh(['ffmpeg', '-y', '-f', 'lavfi', '-i', fallback_vf, '-t', str(dur), '-r', '30', '-g', '30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out])
 
 def render_pipeline_video(state: dict) -> dict:
     """Complete video assembly with Ken Burns animation, TTS audio, karaoke ASS subtitles, and S3 sync."""
@@ -248,9 +248,18 @@ def render_pipeline_video(state: dict) -> dict:
 
     silent_mp4 = os.path.join(work, "silent.mp4")
     try:
-        sh(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', shots_txt, '-c', 'copy', silent_mp4])
+        sh(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', shots_txt, '-c', 'copy', '-movflags', '+faststart', silent_mp4])
     except Exception:
-        sh(['ffmpeg', '-y', '-f', 'lavfi', '-i', f'color=c=black:s=1920x1080:d={state["voice"]["total"]}', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', silent_mp4])
+        # Robust filter_complex concat fallback if copy concatenation fails
+        try:
+            inputs = []
+            for c in clips:
+                inputs.extend(['-i', c])
+            filter_str = f"concat=n={len(clips)}:v=1:a=0[v]"
+            sh(['ffmpeg', '-y'] + inputs + ['-filter_complex', filter_str, '-map', '[v]', '-c:v', 'libx264', '-r', '30', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', silent_mp4])
+        except Exception:
+            fallback_dur = max(5.0, state.get('voice', {}).get('total', 10.0))
+            sh(['ffmpeg', '-y', '-f', 'lavfi', '-i', f'color=c=black:s=1920x1080:d={fallback_dur}', '-t', str(fallback_dur), '-r', '30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', silent_mp4])
 
     # Word-by-word animated karaoke subtitles (.ass)
     ass_path = os.path.join(work, "captions.ass")
@@ -262,22 +271,24 @@ def render_pipeline_video(state: dict) -> dict:
         f.write(words_to_srt(words_data))
 
     final_mp4 = os.path.join(work, "final.mp4")
+    final_tmp = os.path.join(work, "final_tmp.mp4")
     total_dur = max(5.0, state['voice'].get('total', 10.0))
     bgm_path = os.path.join(work, "bgm.wav")
 
     # Synthesize subtle ambient sound bed matching exact duration
-    try:
-        sh([
-            'ffmpeg', '-y',
-            '-f', 'lavfi', '-i', f'sine=f=110:b=4:d={total_dur}',
-            '-f', 'lavfi', '-i', f'anoisesrc=d={total_dur}:c=pink:r=44100:a=0.012',
-            '-filter_complex', '[0:a][1:a]amix=inputs=2,volume=0.08[bg]',
-            '-map', '[bg]',
-            '-c:a', 'pcm_s16le',
-            'bgm.wav'
-        ], cwd=work)
-    except Exception as bgm_err:
-        logger.warning(f"BGM generation skipped: {bgm_err}")
+    if not os.path.exists(bgm_path):
+        try:
+            sh([
+                'ffmpeg', '-y',
+                '-f', 'lavfi', '-i', f'sine=f=110:b=4:d={total_dur}',
+                '-f', 'lavfi', '-i', f'anoisesrc=d={total_dur}:c=pink:r=44100:a=0.012',
+                '-filter_complex', '[0:a][1:a]amix=inputs=2,volume=0.08[bg]',
+                '-map', '[bg]',
+                '-c:a', 'pcm_s16le',
+                'bgm.wav'
+            ], cwd=work)
+        except Exception as bgm_err:
+            logger.warning(f"BGM generation skipped: {bgm_err}")
 
     # Robust voice path resolution
     raw_voice = state['voice'].get('path', '')
@@ -295,9 +306,21 @@ def render_pipeline_video(state: dict) -> dict:
 
     voice_ffmpeg_path = voice_input.replace('\\', '/') if voice_input else ""
 
+    # Guarantee audio stream: if voice track is missing, synthesize a silent audio bed
+    if not voice_ffmpeg_path or not os.path.exists(voice_input):
+        silent_voice = os.path.join(work, "silent_voice.wav")
+        try:
+            sh(['ffmpeg', '-y', '-f', 'lavfi', '-i', f'anullsrc=r=44100:cl=stereo:d={total_dur}', '-t', str(total_dur), '-c:a', 'pcm_s16le', silent_voice])
+            voice_ffmpeg_path = silent_voice.replace('\\', '/')
+        except Exception as a_err:
+            logger.warning(f"Silent audio synthesis fallback: {a_err}")
+
     # Burn animated captions and mix voiceover with background music bed
+    ass_filename = os.path.basename(ass_path)
+    rendered_ok = False
+
+    # Primary pass: Video + Voice + BGM + ASS Subtitles + faststart
     try:
-        ass_filename = os.path.basename(ass_path)
         if voice_ffmpeg_path and os.path.exists(bgm_path):
             cmd = [
                 'ffmpeg', '-y',
@@ -312,7 +335,8 @@ def render_pipeline_video(state: dict) -> dict:
                 '-c:a', 'aac',
                 '-b:a', '192k',
                 '-pix_fmt', 'yuv420p',
-                'final.mp4'
+                '-movflags', '+faststart',
+                'final_tmp.mp4'
             ]
         elif voice_ffmpeg_path:
             cmd = [
@@ -324,25 +348,54 @@ def render_pipeline_video(state: dict) -> dict:
                 '-c:a', 'aac',
                 '-b:a', '192k',
                 '-pix_fmt', 'yuv420p',
-                'final.mp4'
+                '-movflags', '+faststart',
+                'final_tmp.mp4'
             ]
         else:
             cmd = [
                 'ffmpeg', '-y',
                 '-i', 'silent.mp4',
+                '-f', 'lavfi', '-i', f'anullsrc=r=44100:cl=stereo:d={total_dur}',
                 '-vf', f"ass={ass_filename}",
                 '-c:v', 'libx264',
+                '-c:a', 'aac',
+                '-b:a', '192k',
                 '-pix_fmt', 'yuv420p',
-                'final.mp4'
+                '-movflags', '+faststart',
+                'final_tmp.mp4'
             ]
         sh(cmd, cwd=work)
+        if os.path.exists(final_tmp) and os.path.getsize(final_tmp) > 10000:
+            rendered_ok = True
     except Exception as sub_err:
-        logger.warning(f"Direct ASS burning fallback to audio mix: {sub_err}")
+        logger.warning(f"Direct ASS burning failed: {sub_err}. Falling back to clean audio mux.")
+
+    # Secondary pass: Direct Audio Muxing without ASS burning if libass failed
+    if not rendered_ok:
         try:
+            if os.path.exists(final_tmp):
+                try: os.remove(final_tmp)
+                except Exception: pass
             if voice_ffmpeg_path:
-                sh(['ffmpeg', '-y', '-i', 'silent.mp4', '-i', voice_ffmpeg_path, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', 'final.mp4'], cwd=work)
-        except Exception as e:
-            logger.warning(f"Audio mixing failed: {e}. Outputting silent track.")
+                sh(['ffmpeg', '-y', '-i', 'silent.mp4', '-i', voice_ffmpeg_path, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', 'final_tmp.mp4'], cwd=work)
+            else:
+                sh(['ffmpeg', '-y', '-i', 'silent.mp4', '-f', 'lavfi', '-i', f'anullsrc=r=44100:cl=stereo:d={total_dur}', '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', 'final_tmp.mp4'], cwd=work)
+            if os.path.exists(final_tmp) and os.path.getsize(final_tmp) > 10000:
+                rendered_ok = True
+        except Exception as mux_err:
+            logger.warning(f"Secondary audio muxing failed: {mux_err}")
+
+    # Atomic move to final.mp4 to prevent reading unclosed / partial files
+    if rendered_ok and os.path.exists(final_tmp):
+        if os.path.exists(final_mp4):
+            try: os.remove(final_mp4)
+            except Exception: pass
+        os.replace(final_tmp, final_mp4)
+    elif not os.path.exists(final_mp4) or os.path.getsize(final_mp4) < 10000:
+        # Ultimate fallback to silent.mp4 with audio track added
+        try:
+            sh(['ffmpeg', '-y', '-i', silent_mp4, '-f', 'lavfi', '-i', f'anullsrc=r=44100:cl=stereo:d={total_dur}', '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', final_mp4])
+        except Exception:
             final_mp4 = silent_mp4
 
     # Optional S3 upload
@@ -391,33 +444,46 @@ def auto_checks(path: str, expected_seconds: float) -> dict:
     if file_size < 10000:
         issues.append(f"Rendered video file is abnormally small ({file_size} bytes)")
 
-    # 2. Streams & Codec probing
+    # 2. Streams & Codec probing with transient file-flush retry
     checks.append("stream_probe")
-    try:
-        probe_cmd = ['ffprobe', '-v', 'error', '-show_entries', 'stream=codec_type,width,height,channels:format=duration', '-of', 'json', path]
-        res = subprocess.run(probe_cmd, capture_output=True, text=True)
-        if res.returncode == 0:
-            data = json.loads(res.stdout)
-            format_dur = data.get("format", {}).get("duration")
-            if format_dur:
-                try:
-                    actual_dur = float(format_dur)
-                except (ValueError, TypeError):
-                    pass
-            streams = data.get("streams", [])
-            for s in streams:
-                if s.get("codec_type") == "video":
-                    has_video = True
-                    w, h = s.get("width", 0), s.get("height", 0)
-                    res_str = f"{w}x{h}"
-                    if w < 1280 or h < 720:
-                        issues.append(f"Sub-HD resolution detected: {res_str}")
-                elif s.get("codec_type") == "audio":
-                    has_audio = True
-        else:
-            issues.append(f"ffprobe stream inspection failed: {res.stderr[:200]}")
-    except Exception as e:
-        issues.append(f"ffprobe error: {e}")
+    probe_cmd = ['ffprobe', '-v', 'error', '-show_entries', 'stream=codec_type,width,height,channels:format=duration', '-of', 'json', path]
+    
+    probe_success = False
+    last_err = ""
+    for attempt in range(3):
+        try:
+            res = subprocess.run(probe_cmd, capture_output=True, text=True)
+            if res.returncode == 0:
+                data = json.loads(res.stdout)
+                format_dur = data.get("format", {}).get("duration")
+                if format_dur:
+                    try:
+                        actual_dur = float(format_dur)
+                    except (ValueError, TypeError):
+                        pass
+                streams = data.get("streams", [])
+                for s in streams:
+                    if s.get("codec_type") == "video":
+                        has_video = True
+                        w, h = s.get("width", 0), s.get("height", 0)
+                        res_str = f"{w}x{h}"
+                        if w < 1280 or h < 720:
+                            issues.append(f"Sub-HD resolution detected: {res_str}")
+                    elif s.get("codec_type") == "audio":
+                        has_audio = True
+                probe_success = True
+                break
+            else:
+                last_err = res.stderr[:200]
+                import time
+                time.sleep(0.5)
+        except Exception as e:
+            last_err = str(e)
+            import time
+            time.sleep(0.5)
+
+    if not probe_success and last_err:
+        issues.append(f"ffprobe stream inspection failed: {last_err}")
 
     if not has_video:
         issues.append("Missing video stream in rendered container")

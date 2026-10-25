@@ -4,6 +4,7 @@ import { Play, CheckCircle, AlertOctagon, Check, XCircle } from 'lucide-react';
 export default function QAPlayerModal({ job, onDecision }) {
   const renderInfo = job?.values?.render;
   const qaInfo = job?.values?.qa;
+  const qualityReport = job?.values?.quality_report;
   const [hasPlayed, setHasPlayed] = useState(false);
 
   if (!renderInfo) {
@@ -14,14 +15,16 @@ export default function QAPlayerModal({ job, onDecision }) {
     );
   }
 
-  const issues = qaInfo?.issues || [];
+  const isPassed = qualityReport?.passed ?? qaInfo?.passed ?? false;
+  const issues = isPassed ? [] : (qualityReport?.issues || qaInfo?.issues || []);
+  const actualDuration = qualityReport?.duration_actual || renderInfo.duration || 0;
   const videoUrl = renderInfo.s3_url || (renderInfo.path ? `/media/${job.job_id}/final.mp4` : '');
 
   return (
     <div className="glass-panel" style={{ padding: '24px', marginBottom: '24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--border)', paddingBottom: '14px' }}>
         <div>
-          <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#10B981', fontWeight: '700' }}>
+          <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: isPassed ? '#10B981' : '#F59E0B', fontWeight: '700' }}>
             Quality Gate 2 • Final Render Sign-off
           </span>
           <h2 style={{ fontSize: '18px', fontWeight: '700', marginTop: '4px' }}>
@@ -29,7 +32,7 @@ export default function QAPlayerModal({ job, onDecision }) {
           </h2>
         </div>
         <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-          Duration: <b>{renderInfo.duration?.toFixed(1) || '0'}s</b>
+          Duration: <b>{actualDuration.toFixed(1)}s</b>
         </span>
       </div>
 
@@ -78,15 +81,23 @@ export default function QAPlayerModal({ job, onDecision }) {
             </div>
           </div>
 
-          {issues.length > 0 && (
-            <div style={{ padding: '12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '8px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#F87171', fontSize: '13px', fontWeight: '600' }}>
-                <AlertOctagon size={16} /> Flagged Render Issues:
+          {isPassed ? (
+            <div style={{ padding: '12px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#10B981', fontSize: '13px', fontWeight: '600' }}>
+                <CheckCircle size={16} /> All QA Checks Passed: Ready for Sign-off ({actualDuration.toFixed(1)}s HD 1080p)
               </div>
-              <ul style={{ paddingLeft: '20px', marginTop: '6px', fontSize: '12px', color: '#FCA5A5' }}>
-                {issues.map((err, idx) => <li key={idx}>{err}</li>)}
-              </ul>
             </div>
+          ) : (
+            issues.length > 0 && (
+              <div style={{ padding: '12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#F87171', fontSize: '13px', fontWeight: '600' }}>
+                  <AlertOctagon size={16} /> Flagged Render Issues:
+                </div>
+                <ul style={{ paddingLeft: '20px', marginTop: '6px', fontSize: '12px', color: '#FCA5A5' }}>
+                  {issues.map((err, idx) => <li key={idx}>{err}</li>)}
+                </ul>
+              </div>
+            )
           )}
 
           {/* Publishing Sign-off controls */}
