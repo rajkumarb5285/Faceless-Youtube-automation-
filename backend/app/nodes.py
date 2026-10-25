@@ -10,7 +10,7 @@ from app.db import db
 from app.llm import llm_call, extract_json, SHARED_RULES
 from app.tools import web_search, fetch_page, store_vectors, top_similar, probe_duration, words_to_srt, NL, sh
 from app.tts import tts
-from app.render import render_pipeline_video, auto_checks
+from app.render import render_pipeline_video, auto_checks, ensure_disk_space
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -395,6 +395,9 @@ def human_gate_node(state: JobState) -> dict:
     }
 
 def visual_planner(state: JobState) -> dict:
+    job_id = state.get('job_id')
+    work = os.path.join(settings.STORAGE_DIR, job_id) if job_id else settings.STORAGE_DIR
+    ensure_disk_space(work, min_free_mb=1000)
     ch = profile(state)
     out = agent('visuals', PROMPTS['visuals'], {
         'script': state['script'],
@@ -445,6 +448,9 @@ def visual_planner(state: JobState) -> dict:
     }
 
 def voice_director(state: JobState) -> dict:
+    job_id = state.get('job_id')
+    work = os.path.join(settings.STORAGE_DIR, job_id) if job_id else settings.STORAGE_DIR
+    ensure_disk_space(work, min_free_mb=1000)
     ch = profile(state)
     scenes, words_all, t = [], [], 0.0
     lang = ch.get('language_code', 'en-US')

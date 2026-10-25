@@ -7,6 +7,7 @@ import urllib.parse
 import subprocess
 import io
 import logging
+import shutil
 
 try:
     from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter, ImageEnhance
@@ -216,17 +217,56 @@ def make_shot(asset: str, dur: float, motion: str, out: str):
         fallback_vf = f'color=c=black:s=1920x1080:d={dur}'
         sh(['ffmpeg', '-y', '-f', 'lavfi', '-i', fallback_vf, '-t', str(dur), '-r', '30', '-g', '30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out])
 
+def ensure_disk_space(target_dir: str = None, min_free_mb: int = 1000):
+    """
+    Ensure disk has at least min_free_mb available.
+    If space is low, automatically prune oldest completed job media directories to prevent [Errno 28].
+    """
+    check_dir = target_dir or settings.STORAGE_DIR
+    try:
+        os.makedirs(check_dir, exist_ok=True)
+        total, used, free = shutil.disk_usage(check_dir)
+        free_mb = free / (1024 * 1024)
+        if free_mb < min_free_mb:
+            logger.warning(f"Low disk space detected ({free_mb:.1f} MB free). Pruning old media folders...")
+            media_root = settings.STORAGE_DIR
+            if os.path.exists(media_root):
+                entries = []
+                for name in os.listdir(media_root):
+                    sub = os.path.join(media_root, name)
+                    if os.path.isdir(sub):
+                        entries.append((sub, os.path.getmtime(sub)))
+                entries.sort(key=lambda x: x[1])
+                for sub, _ in entries:
+                    if target_dir and os.path.abspath(sub) == os.path.abspath(target_dir):
+                        continue
+                    try:
+                        shutil.rmtree(sub, ignore_errors=True)
+                        logger.info(f"Cleaned old media folder to free space: {sub}")
+                    except Exception:
+                        pass
+                    _, _, new_free = shutil.disk_usage(check_dir)
+                    if (new_free / (1024 * 1024)) >= min_free_mb:
+                        break
+    except Exception as e:
+        logger.warning(f"Disk space check error: {e}")
+
 def render_pipeline_video(state: dict) -> dict:
     """Complete video assembly with Ken Burns animation, TTS audio, karaoke ASS subtitles, and S3 sync."""
-    job = state['job_id']
-    work = os.path.join(settings.STORAGE_DIR, job)
+    job = state.get('job_id') or 'default_job'
+    work = os.path.abspath(os.path.join(settings.STORAGE_DIR, job))
+    ensure_disk_space(work, min_free_mb=1000)
     os.makedirs(work, exist_ok=True)
     
     ch = state.get('channel_profile') or db.channels.find_one({'_id': state.get('channel_id', 'default')}) or {}
     palette = ch.get('palette', {})
     story_style = state.get('story_style', 'cartoon_story')
     
-    scenes = {s['idx']: s for s in state['voice']['scenes']}
+    voice_data = state.get('voice') or {}
+    scenes_list = voice_data.get('scenes', [])
+    if not scenes_list and state.get('script', {}).get('scenes'):
+        scenes_list = [{'idx': sc['idx'], 'dur': 5.0, 'wav': f"Scene {sc['idx']}"} for sc in state['script']['scenes']]
+    scenes = {s['idx']: s for s in scenes_list}
     clips = []
     
     for idx in sorted(scenes):
@@ -264,7 +304,7 @@ def render_pipeline_video(state: dict) -> dict:
     # Word-by-word animated karaoke subtitles (.ass)
     ass_path = os.path.join(work, "captions.ass")
     srt_path = os.path.join(work, "captions.srt")
-    words_data = state['voice'].get('words', [])
+    words_data = voice_data.get('words', [])
     
     generate_ass_karaoke_subtitles(words_data, ass_path, palette)
     with open(srt_path, "w", encoding="utf-8") as f:
@@ -272,7 +312,7 @@ def render_pipeline_video(state: dict) -> dict:
 
     final_mp4 = os.path.join(work, "final.mp4")
     final_tmp = os.path.join(work, "final_tmp.mp4")
-    total_dur = max(5.0, state['voice'].get('total', 10.0))
+    total_dur = max(5.0, voice_data.get('total', 10.0))
     bgm_path = os.path.join(work, "bgm.wav")
 
     # Synthesize subtle ambient sound bed matching exact duration
@@ -291,27 +331,28 @@ def render_pipeline_video(state: dict) -> dict:
             logger.warning(f"BGM generation skipped: {bgm_err}")
 
     # Robust voice path resolution
-    raw_voice = state['voice'].get('path', '')
-    voice_input = os.path.abspath(raw_voice) if raw_voice else ""
-    if not os.path.exists(voice_input):
+    raw_voice = voice_data.get('path', '')
+    voice_input = os.path.abspath(raw_voice) if raw_voice and os.path.isfile(raw_voice) else ""
+    if not voice_input or not os.path.isfile(voice_input):
         candidates = [
             os.path.join(work, "voice_full.wav"),
-            os.path.join(work, os.path.basename(raw_voice) if raw_voice else ""),
+            os.path.join(work, os.path.basename(raw_voice)) if raw_voice else "",
             os.path.join(work, "voice_001.wav")
         ]
         for c in candidates:
-            if c and os.path.exists(c):
+            if c and os.path.isfile(c):
                 voice_input = os.path.abspath(c)
                 break
 
-    voice_ffmpeg_path = voice_input.replace('\\', '/') if voice_input else ""
+    voice_ffmpeg_path = voice_input.replace('\\', '/') if (voice_input and os.path.isfile(voice_input)) else ""
 
     # Guarantee audio stream: if voice track is missing, synthesize a silent audio bed
-    if not voice_ffmpeg_path or not os.path.exists(voice_input):
-        silent_voice = os.path.join(work, "silent_voice.wav")
+    if not voice_ffmpeg_path or not os.path.isfile(voice_input):
+        silent_voice = os.path.abspath(os.path.join(work, "silent_voice.wav"))
         try:
             sh(['ffmpeg', '-y', '-f', 'lavfi', '-i', f'anullsrc=r=44100:cl=stereo:d={total_dur}', '-t', str(total_dur), '-c:a', 'pcm_s16le', silent_voice])
-            voice_ffmpeg_path = silent_voice.replace('\\', '/')
+            if os.path.isfile(silent_voice):
+                voice_ffmpeg_path = silent_voice.replace('\\', '/')
         except Exception as a_err:
             logger.warning(f"Silent audio synthesis fallback: {a_err}")
 
