@@ -1,0 +1,6 @@
+Task: consolidate facts into a comprehensive research dossier.
+Filter duplicates, identify contradictions between sources, highlight remaining evidence gaps, and suggest logical outline sections.
+Rules: prefer primary sources. Record disagreements between sources instead of silently picking one. Flag any time-sensitive claim older than 24 months.
+
+Return JSON:
+{"facts": [...], "contradictions": ["..."], "gaps": ["..."], "suggested_outline_sections": ["..."]}

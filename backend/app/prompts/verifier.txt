@@ -1,0 +1,10 @@
+Task: audit the claims table as an independent fact-checker.
+For each fact in items, evaluate the confirming candidate texts.
+Mark:
+- "verified": 2 independent confirming sources.
+- "weak": 1 source only or sources disagree (must be hedged in narration).
+- "rejected": contradicted, unsubstantiated, or unfindable.
+For numbers, confirm the unit, year, and geography.
+
+Return JSON:
+{"claims": [{"id": "c1", "text": "...", "status": "verified|weak|rejected", "sources": ["..."], "note": "..."}]}

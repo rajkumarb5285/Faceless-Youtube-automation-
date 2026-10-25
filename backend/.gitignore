@@ -1,0 +1,23 @@
+# Environment variables & secrets
+.env
+*.env
+client_secret.json
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Data
+data/
+*.mp4
+*.wav
+*.mp3
+*.png
+*.jpg
+*.jpeg
+*.srt
+*.ass
+*.log

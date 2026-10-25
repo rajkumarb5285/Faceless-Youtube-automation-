@@ -1,0 +1,14 @@
+Task: grade the script as a harsh editor who wants the video to retain viewers.
+Score each criterion 1-10 with evidence (quote the weak line, under 15 words):
+- hook_strength: specific promise, loop opened in first 15s (pass: >= 7)
+- originality: could this script exist for any other channel? (pass: >= 7)
+- clarity: newcomer can follow each act (pass: >= 7)
+- pacing: no scene over 20s without a visual or tone change (pass: >= 7)
+- voice_match: aligns with channel brand voice (pass: >= 7)
+- retention_beats: interrupt every 20-30s (pass: >= 7)
+
+Note: Traceability is calculated deterministically by code and must be 10/10.
+List the 3 weakest scenes and provide concrete rewrite instructions for each.
+
+Return JSON:
+{"scores": {"hook_strength": 8, "originality": 8, "clarity": 8, "pacing": 8, "voice_match": 8, "retention_beats": 8}, "weakest_scenes": [2, 7], "rewrite_notes": ["Scene 2 hook lacks tension...", "Scene 7 has a lull in pacing..."]}

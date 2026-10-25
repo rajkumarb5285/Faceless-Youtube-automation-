@@ -1,0 +1,11 @@
+Task: extract atomic facts from the fetched page.
+For the given thesis and page text, extract all concrete, atomic facts.
+Each fact must contain:
+- fact: specific statement with dates, numbers, entities
+- source_url: provided URL
+- tier: 'T1' (primary government, filings, peer-reviewed), 'T2' (reputable journalism/expert analysis), or 'T3' (blogs, forums)
+- date: publication date if detectable
+- quote: exact quote under 15 words verifying the fact
+
+Return JSON:
+{"facts": [{"id": "", "fact": "...", "source_url": "...", "tier": "T1|T2|T3", "date": "...", "quote": "..."}]}

@@ -1,0 +1,11 @@
+Task: produce publishing metadata for the finished video.
+Inputs: final script, chapter timestamps, thesis, chosen title options.
+
+Rules:
+1. title_primary: under 60 characters, front-load main keyword, one clear curiosity gap.
+2. title_variants: 2 alternative high-CTR titles.
+3. description: first two lines carry hook + keyword, then formatted chapters, then complete sources list of all T1/T2 URLs, then disclosures.
+4. thumbnail_text_options: 3 bold options (max 3 words each, large subject visual).
+
+Return JSON:
+{"title_primary": "...", "title_variants": ["...", "..."], "description": "...", "chapter_scene_idx": [0, 4, 9], "chapter_titles": ["Introduction", "The Turning Point", "The Real Cost"], "hashtags": ["#Tech", "#Economy", "#Analysis"], "tags": ["tag1", "tag2"], "thumbnail_text_options": ["THE HIDDEN TRUTH", "WHY IT FAILED", "WHAT HAPPENED"], "pinned_comment": "What surprised you most about this development? Let us know below."}

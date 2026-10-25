@@ -1,0 +1,42 @@
+# Environment variables & secrets
+.env
+*.env
+backend/.env
+.env.local
+.env.*.local
+client_secret.json
+
+# Python
+venv/
+backend/venv/
+__pycache__/
+*/__pycache__/
+backend/app/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node & Frontend
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+
+# Generated Media, Audio, Videos & Data
+data/
+backend/data/
+*.mp4
+*.wav
+*.mp3
+*.png
+*.jpg
+*.jpeg
+*.srt
+*.ass
+*.log
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

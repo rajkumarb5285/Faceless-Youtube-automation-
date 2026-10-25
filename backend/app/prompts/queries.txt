@@ -1,0 +1,4 @@
+Task: build 10 diverse search queries for research.
+Write 10 specific search queries covering primary data, history, expert views, counterarguments, concrete case studies, and recent developments for the given thesis.
+Return JSON:
+{"queries": ["query 1", "query 2", ...]}

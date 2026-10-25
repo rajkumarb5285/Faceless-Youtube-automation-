@@ -1,0 +1,33 @@
+Task: write the full, captivating script from the story outline and verified claims.
+
+SCRIPTWRITING RULES FOR HIGH-RETENTION VIRAL VIDEOS:
+1. Write for the ear: Short, punchy sentences, active verbs, natural rhythm (140 to 160 wpm).
+2. The Hook (Scene 1): First sentence MUST be a dramatic hook, bizarre dilemma, or vivid scenario ("Imagine waking up to...", "Inside a fortified vault in Zurich...", "There is a 400-ton titan hiding in plain sight..."). Never say "Hello", "Welcome back", or boring introductions.
+3. Engaging Storytelling Tone: Use suspense, sensory details, and colorful analogies. Keep the viewer at the edge of their seat.
+4. Each scene must be 6 to 15 seconds long with:
+   - "idx": sequential integer
+   - "narration": punchy conversational script line
+   - "on_screen_text": 2-4 words highlighted for maximum kinetic emphasis
+   - "visual_intent": detailed cartoon/illustration scene prompt (e.g. "Vibrant 2D cartoon illustration of an exhausted worker staring at a gigantic smoking mechanical gear in a futuristic power station, Pixar animation style, colorful and expressive")
+   - "claim_ids": array of claim IDs referenced
+   - "pace": "slow", "normal", or "fast"
+   - "pattern_interrupt": boolean true on climax or dramatic shift
+5. Strictly forbidden phrases: "in today's video", "without further ado", "let's dive in", "game-changer", "in conclusion", "buckle up".
+
+Return JSON:
+{
+  "title": "Engaging Viral Story Title",
+  "scenes": [
+    {
+      "idx": 1,
+      "narration": "...",
+      "on_screen_text": "...",
+      "visual_intent": "Vibrant cartoon illustration of...",
+      "claim_ids": ["c1"],
+      "pace": "normal",
+      "pattern_interrupt": false
+    }
+  ],
+  "total_words": 150,
+  "self_check_notes": "All claim IDs verified, retention hook in scene 1."
+}

@@ -1,0 +1,26 @@
+Task: plan dynamic cartoon and illustrated visuals for every scene in the script.
+
+RULES FOR VISUAL EXCELLENCE:
+1. Every scene must have a high-impact, colorful visual (cartoon illustration, anime digital art, 3D Pixar-style render, or graphic novel illustration).
+2. For each scene return a list of shots (1 to 2 shots per scene):
+   - "scene_idx": integer
+   - "visual_type": "cartoon|illustration|chart|motion_still"
+   - "query_or_spec": detailed image search query with artistic modifiers (e.g. "cartoon character discovering glowing secret blueprint in dark workshop 4k digital art", "futuristic electrical substation with blue lightning bolts vector illustration", "overworked engineer with steam coming from ears funny 2d animation")
+   - "weight": float (e.g. 1.0)
+   - "motion": "zoom_in|pan_left|pan_right"
+   - "fallback": "illustration"
+3. Never use generic or vague queries like "technology" or "scene 1". Make queries rich, concrete, and visually descriptive.
+
+Return JSON:
+{
+  "shots": [
+    {
+      "scene_idx": 1,
+      "visual_type": "cartoon",
+      "query_or_spec": "colorful cartoon illustration of...",
+      "weight": 1.0,
+      "motion": "zoom_in",
+      "fallback": "illustration"
+    }
+  ]
+}

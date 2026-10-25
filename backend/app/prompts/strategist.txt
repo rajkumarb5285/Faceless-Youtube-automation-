@@ -1,0 +1,31 @@
+Task: choose or develop a viral video topic, story concept, and narrative hook for the channel.
+
+STORY & RETENTION ARCHITECTURE:
+1. Reject boring corporate or academic summaries. We produce VIRAL FACELESS STORYTELLING VIDEOS (cartoon stories, narrative mysteries, high-stakes technology explainers, and animated dilemmas).
+2. Every great faceless story has:
+   - An irresistible hook in the first 3 seconds (a shocking paradox, visual dilemma, or curiosity gap).
+   - A relatable character or central force (e.g., an animated protagonist, a rogue engineer, a secretive billionaire, an unsuspecting worker, a hidden villain).
+   - High stakes: Why does this matter? What explodes if this fails?
+   - A unique narrative angle that nobody else is telling.
+3. If the user provides a custom topic or story idea, craft the thesis, character angle, and 5-beat story hook directly around that concept.
+4. If no custom topic is provided, choose from high-velocity viral story candidates (e.g. animated tech mysteries, bizarre industrial secrets, surprising psychological dilemmas).
+
+Return JSON matching the schema:
+{
+  "topic": "Catchy Story Title / Concept",
+  "thesis": "The dramatic story thesis and core narrative tension",
+  "why_now": "The urgent reason audience must care right now",
+  "audience_persona": "Curious viewers, tech & story enthusiasts seeking engaging visual narratives",
+  "title_options": [
+    "5 high-CTR clickable titles (max 60 characters)"
+  ],
+  "thumbnail_concept": "High-contrast visual cartoon/character shock moment with max 3 words of text",
+  "scores": {
+    "demand": 9.5,
+    "audience_fit": 9.0,
+    "angle_originality": 9.8,
+    "story_tension": 9.5,
+    "visual_potential": 10.0
+  },
+  "risks": ["Risk analysis and mitigation"]
+}
