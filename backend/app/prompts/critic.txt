@@ -1,14 +1,41 @@
-Task: grade the script as a harsh editor who wants the video to retain viewers.
-Score each criterion 1-10 with evidence (quote the weak line, under 15 words):
-- hook_strength: specific promise, loop opened in first 15s (pass: >= 7)
-- originality: could this script exist for any other channel? (pass: >= 7)
-- clarity: newcomer can follow each act (pass: >= 7)
-- pacing: no scene over 20s without a visual or tone change (pass: >= 7)
-- voice_match: aligns with channel brand voice (pass: >= 7)
-- retention_beats: interrupt every 20-30s (pass: >= 7)
+Task: Rigorously critique the generated video script for topic fidelity, factual grounding, narrative progression, and viewer engagement.
 
-Note: Traceability is calculated deterministically by code and must be 10/10.
-List the 3 weakest scenes and provide concrete rewrite instructions for each.
+EVALUATION CRITERIA (Score each 1-10):
+1. topic_fidelity: (MANDATORY GATE: must be >= 7.5). Does every scene directly explore the specific requested subject and central question, or does it wander into broad generalities or off-topic filler?
+2. evidence_grounding: (MANDATORY GATE: must be >= 7.5). Are factual claims substantiated by the supplied verified claims and research dossier? Are there zero fabricated statistics or events?
+3. central_question_coverage: Does the script resolve or insightfully unpack the driving inquiry?
+4. originality: Does the script offer a distinctive angle, fresh synthesis, and avoidance of predictable cliches?
+5. narrative_progression: Does each scene introduce new information and causality, with zero repetition or circular points?
+6. spoken_quality: Is the narration punchy, natural for human speech, rhythmically varied, and free of academic jargon or banned phrases?
+7. hook_strength: Does Scene 1 immediately immerse the audience into the topic's core reality without canned tropes?
+8. pacing_and_duration: Is the length and scene distribution well-balanced without dead zones?
+
+CRITIQUE AND REWRITE INSTRUCTIONS:
+- Identify the exact scene numbers that underperform.
+- Provide concrete, scene-specific feedback with actionable corrections (quote weak lines or point out exact missing evidence).
+- Never give vague feedback like "make it more engaging." Specify what factual evidence or narrative pivot to substitute.
 
 Return JSON:
-{"scores": {"hook_strength": 8, "originality": 8, "clarity": 8, "pacing": 8, "voice_match": 8, "retention_beats": 8}, "weakest_scenes": [2, 7], "rewrite_notes": ["Scene 2 hook lacks tension...", "Scene 7 has a lull in pacing..."]}
+{
+  "scores": {
+    "topic_fidelity": 8,
+    "evidence_grounding": 8,
+    "central_question_coverage": 8,
+    "originality": 8,
+    "narrative_progression": 8,
+    "spoken_quality": 8,
+    "hook_strength": 8,
+    "pacing_and_duration": 8
+  },
+  "topic_fidelity_score": 8,
+  "evidence_grounding_score": 8,
+  "weakest_scenes": [2, 5],
+  "rewrite_notes": [
+    "Scene 2: Overly broad statement about technology. Ground it in the verified claim regarding specific manufacturing lead times.",
+    "Scene 5: Repetitive phrasing of scene 4. Replace with the economic consequence for data centers."
+  ],
+  "specific_critique": [
+    "Scene 2 wanders from the central question of transformer manufacturing to general grid history.",
+    "Scene 5 repeats the 5 manufacturers statistic without adding the 2600 GW bottleneck context."
+  ]
+}

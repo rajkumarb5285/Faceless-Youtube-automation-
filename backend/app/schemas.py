@@ -1,5 +1,5 @@
 from typing import Literal, Optional, TypedDict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 class Topic(BaseModel):
     topic: str
@@ -48,15 +48,26 @@ class Act(BaseModel):
     open_loop: str
     word_budget: int
 
+class CreativeBrief(BaseModel):
+    core_premise: str = ""
+    central_question: str = ""
+    narrative_form: str = "investigative"  # investigative, case_study, historical_reconstruction, scientific_explanation, chronological, problem_solving
+    chosen_angle: str = ""
+    key_insights: list[str] = Field(default_factory=list)
+    target_audience_takeaway: str = ""
+    what_makes_it_interesting: str = ""
+    cliches_to_avoid: list[str] = Field(default_factory=list)
+
 class Outline(BaseModel):
     hook_idea: str
+    creative_brief: Optional[CreativeBrief] = None
     acts: list[Act]
     payoff: str
     close: str
-    retention_map: list[str]
+    retention_map: list[str] = Field(default_factory=list)
 
 class Scene(BaseModel):
-    idx: int
+    idx: int = 1
     narration: str
     on_screen_text: str = ""
     visual_intent: str = ""
@@ -64,16 +75,40 @@ class Scene(BaseModel):
     pace: Literal["slow", "normal", "fast"] = "normal"
     pattern_interrupt: bool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_scene_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "idx" not in data and "scene_id" in data:
+                data["idx"] = data["scene_id"]
+            if not data.get("visual_intent") and data.get("visual_description"):
+                data["visual_intent"] = data["visual_description"]
+        return data
+
+    @property
+    def scene_id(self) -> int:
+        return self.idx
+
+    @property
+    def visual_description(self) -> str:
+        return self.visual_intent
+
 class Script(BaseModel):
     title: str
     scenes: list[Scene]
     total_words: int = 0
     self_check_notes: str = ""
+    central_question: Optional[str] = None
+    narrative_angle: Optional[str] = None
+    narrative_form: Optional[str] = None
 
 class CriticReport(BaseModel):
     scores: dict[str, int]
+    topic_fidelity_score: int = 8
+    evidence_grounding_score: int = 8
     weakest_scenes: list[int] = Field(default_factory=list)
     rewrite_notes: list[str] = Field(default_factory=list)
+    specific_critique: list[str] = Field(default_factory=list)
 
 class Shot(BaseModel):
     scene_idx: int = 0

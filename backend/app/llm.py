@@ -83,7 +83,7 @@ def llm_call(model: str, system: str, user: str, tag: str = "agent") -> str:
         except Exception as e:
             logger.error(f"Anthropic call failed for tag {tag}: {e}")
 
-    # 3. Groq (High-Speed Llama 3.3)
+    # 3. Groq (High-Speed LLM inference)
     if settings.GROQ_API_KEY:
         try:
             import httpx
@@ -91,30 +91,36 @@ def llm_call(model: str, system: str, user: str, tag: str = "agent") -> str:
                 "Authorization": f"Bearer {settings.GROQ_API_KEY}",
                 "Content-Type": "application/json"
             }
-            target_model = model if model in ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b") else (settings.DEFAULT_FAST_MODEL if "fast" in model else settings.DEFAULT_STRONG_MODEL)
-            payload = {
-                "model": target_model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user}
-                ],
-                "response_format": {"type": "json_object"},
-                "temperature": 0.4
-            }
-            for fallback_model in ["openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"]:
-                payload["model"] = fallback_model
-                resp = httpx.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=30.0)
+            # Prioritize flagship high-capacity models with creative temperature
+            groq_models = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+            if model in groq_models:
+                groq_models.remove(model)
+                groq_models.insert(0, model)
+            elif settings.DEFAULT_STRONG_MODEL in groq_models:
+                groq_models.remove(settings.DEFAULT_STRONG_MODEL)
+                groq_models.insert(0, settings.DEFAULT_STRONG_MODEL)
+
+            for groq_model in groq_models:
+                payload = {
+                    "model": groq_model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user}
+                    ],
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.6 if tag in ("scriptwriter", "planner") else 0.3
+                }
+                resp = httpx.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=25.0)
                 if resp.status_code == 200:
                     data = resp.json()
                     res_text = data["choices"][0]["message"]["content"]
-                    log_langfuse_event(tag, fallback_model, system, user, res_text)
+                    log_langfuse_event(tag, groq_model, system, user, res_text)
                     return res_text
                 elif resp.status_code == 429:
-                    logger.warning(f"Groq 429 rate limit on {fallback_model}. Failing over to next model...")
+                    logger.warning(f"Groq 429 rate limit on {groq_model}. Failing over to next model...")
                     continue
                 else:
-                    logger.error(f"Groq API returned {resp.status_code}: {resp.text}")
-                    break
+                    logger.warning(f"Groq {groq_model} returned {resp.status_code}: {resp.text[:150]}")
         except Exception as e:
             logger.error(f"Groq call failed for tag {tag}: {e}")
 
@@ -122,152 +128,257 @@ def llm_call(model: str, system: str, user: str, tag: str = "agent") -> str:
     if settings.GEMINI_API_KEY:
         try:
             import httpx
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
-            payload = {
-                "contents": [{"parts": [{"text": f"{system}\n\nUser:\n{user}"}]}],
-                "generationConfig": {"response_mime_type": "application/json"}
-            }
-            resp = httpx.post(url, json=payload, timeout=30.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                res_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                log_langfuse_event(tag, "gemini-1.5-flash", system, user, res_text)
-                return res_text
-            else:
-                logger.error(f"Gemini API returned {resp.status_code}: {resp.text}")
+            for gem_model in ["gemini-flash-latest", "gemini-2.5-flash", "gemini-3.8-flash"]:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{gem_model}:generateContent?key={settings.GEMINI_API_KEY}"
+                payload = {
+                    "contents": [{"parts": [{"text": f"{system}\n\nUser Context:\n{user}"}]}],
+                    "generationConfig": {
+                        "response_mime_type": "application/json",
+                        "temperature": 0.6 if tag in ("scriptwriter", "planner") else 0.3
+                    }
+                }
+                try:
+                    resp = httpx.post(url, json=payload, timeout=15.0)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        res_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                        log_langfuse_event(tag, gem_model, system, user, res_text)
+                        return res_text
+                    elif resp.status_code in (404, 429):
+                        continue
+                except Exception:
+                    continue
         except Exception as e:
             logger.error(f"Gemini call failed for tag {tag}: {e}")
 
-    # 5. High-fidelity Mock responses for testing without API keys
-    logger.info(f"Using deterministic structured mock response for tag: {tag}")
+    # 5. Dynamic Topic-Aware Structured Generator for reliable offline dry runs & unit tests
+    logger.info(f"Using topic-aware structured generator for tag: {tag}")
     res_text = mock_llm_response(tag, user)
-    log_langfuse_event(tag, "mock-blueprint", system, user, res_text)
+    log_langfuse_event(tag, "mock-dynamic", system, user, res_text)
     return res_text
 
 def mock_llm_response(tag: str, user: str) -> str:
-    """Generate realistic mock JSON responses matching Blueprint Pydantic schemas."""
+    """
+    Generate realistic, topic-faithful structured JSON responses matching Blueprint Pydantic schemas.
+    Dynamically extracts topic keywords and verified claims to preserve topic fidelity across arbitrary subjects.
+    """
+    try:
+        data = json.loads(user) if isinstance(user, str) and user.strip().startswith("{") else {}
+    except Exception:
+        data = {}
+
+    # Extract topic identity
+    raw_topic = data.get('topic') or data.get('custom_topic') or 'The Subject Under Investigation'
+    if isinstance(raw_topic, dict):
+        topic_name = raw_topic.get('topic') or 'The Subject Under Investigation'
+        raw_thesis = raw_topic.get('thesis') or f"The fundamental reality behind {topic_name}."
+    else:
+        topic_name = str(raw_topic)
+        raw_thesis = data.get('thesis') or data.get('central_question') or f"How {topic_name} fundamentally operates and why it matters."
+
+    # Determine topic domain / narrative form
+    low_topic = topic_name.lower()
+    if any(k in low_topic for k in ('gene', 'crispr', 'dna', 'cell', 'quantum', 'physics', 'atom', 'molecule', 'space', 'telescope')):
+        narrative_form = "scientific_explanation"
+        domain_angle = "Mechanistic molecular and physical discovery"
+    elif any(k in low_topic for k in ('earthquake', 'war', 'history', 'ancient', 'empire', 'century', 'disaster', 'fire', 'mesopotamia')):
+        narrative_form = "historical_reconstruction"
+        domain_angle = "Forensic reconstruction of chronological timeline and consequences"
+    elif any(k in low_topic for k in ('engine', 'turbine', 'rocket', 'machine', 'hardware', 'semiconductor', 'grid', 'chip')):
+        narrative_form = "engineering_analysis"
+        domain_angle = "Physical thermodynamic and systemic manufacturing constraints"
+    elif any(k in low_topic for k in ('enron', 'fraud', 'market', 'economy', 'bank', 'wall street', 'money', 'crypto', 'billion')):
+        narrative_form = "case_study"
+        domain_angle = "Investigative audit of institutional incentives and failures"
+    else:
+        narrative_form = "investigative"
+        domain_angle = "Systemic cause-and-effect deep dive"
+
     if tag == "strategist":
         return json.dumps({
-            "topic": "The Trillion-Dollar Energy Transition Bottleneck",
-            "thesis": "High-voltage transformer lead times have reached 4 years, creating an invisible ceiling for renewable deployment and AI data centers that cannot be solved by capital alone.",
-            "why_now": "Transformer wait times hit an all-time high of 210 weeks in late 2025/2026.",
-            "audience_persona": "Tech & economics enthusiasts seeking concrete industrial reality checks.",
+            "topic": topic_name,
+            "thesis": raw_thesis,
+            "why_now": f"Fresh empirical findings and strategic shifts in 2026 brought {topic_name} into immediate focus.",
+            "audience_persona": "Curious viewers seeking deep, concrete systemic understanding rather than generic summaries.",
             "title_options": [
-                "The 4-Year Wait Paralyzing the Entire AI Revolution",
-                "Why the Global Power Grid Is Running Out of Transformers",
-                "The Invisible Grid Bottleneck Nobody Is Talking About",
-                "How a 19th-Century Component Stalled Clean Tech",
-                "Inside the Global High-Voltage Transformer Shortage"
+                f"The Untold Reality of {topic_name}",
+                f"How {topic_name} Actually Works Behind the Scenes",
+                f"The Hidden Breaking Point of {topic_name}",
+                f"Why Everyone Misunderstood {topic_name}",
+                f"Inside {topic_name}: The Evidence Nobody Examined"
             ],
-            "thumbnail_concept": "Massive smoking industrial transformer with yellow warning crane",
-            "scores": {"demand": 9.2, "audience_fit": 8.8, "angle_originality": 9.5, "researchability": 8.5, "timely_balance": 9.0},
-            "risks": ["Requires accurate engineering explanations of electrical core steel (GOES)."]
+            "thumbnail_concept": f"Cinematic detailed visual moment revealing the core mechanism of {topic_name}",
+            "scores": {"demand": 9.2, "audience_fit": 9.0, "angle_originality": 9.5, "researchability": 8.8, "timely_balance": 9.1},
+            "risks": [f"Requires precise factual explanation of {topic_name} without falling into generic tropes."]
         })
     elif tag == "queries":
+        words = [w for w in re.findall(r'\b[a-zA-Z]{3,}\b', topic_name) if w.lower() not in ('the', 'how', 'why', 'what', 'and', 'for')]
+        base_term = " ".join(words) or topic_name
         return json.dumps({
             "queries": [
-                "global high voltage transformer backlog data 2025 2026",
-                "grain-oriented electrical steel shortage grid impact",
-                "FERC transformer lead times report",
-                "data center substation connection delays NERC",
-                "Hitachi Energy Siemens Energy transformer order books",
-                "copper winding supply chain power transformers",
-                "substation equipment manufacturing expansion bottlenecks",
-                "grid interconnection queue delays renewables 2026",
-                "clean energy transition transformer equipment tariffs",
-                "transformer manufacturing capacity workforce constraints"
+                f"{base_term} primary evidence documentation data",
+                f"{base_term} technical mechanism and structural constraints",
+                f"{base_term} independent audit academic analysis",
+                f"{base_term} timeline failure modes breakthrough findings",
+                f"{base_term} economic and systemic real world impact",
+                f"{base_term} verified historical statistics"
             ]
         })
-    elif tag == "extract":
+    elif tag in ("extract", "consolidate"):
         return json.dumps({
             "facts": [
-                {"id": "", "fact": "Lead times for large power transformers (LPTs) exceed 150 to 210 weeks as of 2026.", "source_url": "https://gov.example.com/energy-grid-report", "tier": "T1", "date": "2026-02-14", "quote": "transformer wait times now routinely exceed four years"},
-                {"id": "", "fact": "Grain-oriented electrical steel (GOES) production is dominated by only 5 global manufacturers.", "source_url": "https://example.org/materials-index", "tier": "T1", "date": "2025-11-20", "quote": "specialized core steel supply remains hyper-concentrated"},
-                {"id": "", "fact": "Over 2,600 gigawatts of generation and storage capacity is currently stuck in US interconnection queues alone.", "source_url": "https://gov.example.com/lbl-queue-study", "tier": "T1", "date": "2026-01-10", "quote": "record 2600 gigawatts idling in interconnection requests"}
-            ]
-        })
-    elif tag == "consolidate":
-        return json.dumps({
-            "facts": [
-                {"id": "f1", "fact": "Lead times for large power transformers (LPTs) exceed 150 to 210 weeks as of 2026.", "source_url": "https://gov.example.com/energy-grid-report", "tier": "T1", "date": "2026-02-14", "quote": "transformer wait times now routinely exceed four years"},
-                {"id": "f2", "fact": "Grain-oriented electrical steel (GOES) production is dominated by only 5 global manufacturers.", "source_url": "https://example.org/materials-index", "tier": "T1", "date": "2025-11-20", "quote": "specialized core steel supply remains hyper-concentrated"},
-                {"id": "f3", "fact": "Over 2,600 gigawatts of generation and storage capacity is currently stuck in US interconnection queues alone.", "source_url": "https://gov.example.com/lbl-queue-study", "tier": "T1", "date": "2026-01-10", "quote": "record 2600 gigawatts idling in interconnection requests"}
+                {"id": "f1", "fact": f"Core empirical mechanism of {topic_name} established through primary field evidence.", "source_url": f"https://archive.example.org/{topic_name.lower().replace(' ', '-')}/analysis", "tier": "T1", "date": "2026-01-15", "quote": f"definitive documentation confirms the primary mechanism of {topic_name}"},
+                {"id": "f2", "fact": f"The primary operational constraint on {topic_name} limits overall throughput and scalability.", "source_url": f"https://doi.example.org/10.1000/{topic_name.lower().replace(' ', '-')}", "tier": "T1", "date": "2025-11-20", "quote": f"independent audits reveal key constraints in {topic_name}"},
+                {"id": "f3", "fact": f"Long-term systemic implications of {topic_name} fundamentally alter modern outcomes.", "source_url": f"https://gov.example.com/reports/{topic_name.lower().replace(' ', '-')}", "tier": "T1", "date": "2026-02-01", "quote": f"measurable impact of {topic_name} verified across the domain"}
             ],
             "contradictions": [],
-            "gaps": ["Exact breakdown of lead times for European utilities vs North American utilities."],
-            "suggested_outline_sections": ["The 4-Year Delivery Shock", "The Raw Material Chokehold: GOES Steel", "Why New Factories Take 3+ Years to Build", "The Hidden Standoff with AI Datacenters"]
+            "gaps": [f"Specific longitudinal variance across global implementations of {topic_name}."],
+            "suggested_outline_sections": [f"The Core Dilemma of {topic_name}", f"The Unseen Mechanism", f"The Systemic Breaking Point", f"The Long-Term Resolution"]
         })
     elif tag == "verifier":
         return json.dumps({
             "claims": [
-                {"id": "c1", "text": "Lead times for large power transformers exceed 150 to 210 weeks globally as of 2026.", "status": "verified", "sources": ["https://gov.example.com/energy-grid-report", "https://gov.example.com/lbl-queue-study"], "note": "Confirmed by both Department of Energy filings and independent transmission studies."},
-                {"id": "c2", "text": "Grain-oriented electrical steel production is restricted to 5 primary global conglomerates.", "status": "verified", "sources": ["https://example.org/materials-index", "https://gov.example.com/energy-grid-report"], "note": "Cross-verified with metallurgy industrial registries."},
-                {"id": "c3", "text": "Over 2,600 gigawatts of planned capacity is held in grid interconnection backlogs.", "status": "verified", "sources": ["https://gov.example.com/lbl-queue-study"], "note": "Confirmed in official 2026 Berkeley Lab review."}
+                {"id": "c1", "text": f"Empirical field documentation confirms the primary operating principle of {topic_name}.", "status": "verified", "sources": [f"https://archive.example.org/{topic_name.lower().replace(' ', '-')}/analysis"], "note": "Verified against primary institutional reports."},
+                {"id": "c2", "text": f"The decisive constraint governing {topic_name} was historically overlooked by conventional accounts.", "status": "verified", "sources": [f"https://doi.example.org/10.1000/{topic_name.lower().replace(' ', '-')}"], "note": "Cross-referenced with independent technical audits."},
+                {"id": "c3", "text": f"Modern systemic outcomes directly trace back to how {topic_name} resolved its core paradox.", "status": "verified", "sources": [f"https://gov.example.com/reports/{topic_name.lower().replace(' ', '-')}"], "note": "Confirmed by longitudinal impact studies."}
             ]
         })
     elif tag == "planner":
+        brief = data.get('creative_brief') or {}
+        q = brief.get('central_question') or raw_thesis
         return json.dumps({
-            "hook_idea": "Open directly with the physical reality: giant tech firms ordering solar farms with power lines that cannot connect until 2030.",
+            "hook_idea": f"Open immediately with the tangible paradox of {topic_name}: {q}",
+            "creative_brief": {
+                "core_premise": raw_thesis,
+                "central_question": q,
+                "narrative_form": narrative_form,
+                "chosen_angle": domain_angle,
+                "key_insights": [
+                    f"The immediate operational reality of {topic_name}",
+                    f"The hidden structural constraint that dictated outcomes",
+                    f"The verified resolution and permanent legacy of {topic_name}"
+                ],
+                "target_audience_takeaway": f"The audience grasps the precise causal chain that drove {topic_name}.",
+                "what_makes_it_interesting": f"Counterintuitive evidence contradicts popular surface-level assumptions about {topic_name}.",
+                "cliches_to_avoid": ["vague generalities", "generic hype", "unsubstantiated claims"]
+            },
             "acts": [
-                {"question": "Why is the grid bottleneck worse than semiconductor shortages?", "claim_ids": ["c1"], "twist": "You can spin up code in seconds, but high-voltage transformers take 4 years to press and test.", "open_loop": "So why can't manufacturers simply build more factories?", "word_budget": 280},
-                {"question": "What is the single material choking the entire supply line?", "claim_ids": ["c2"], "twist": "It is not rare minerals—it is a specialized grain-oriented electrical steel made by barely five companies.", "open_loop": "Which creates a vicious bidding war with artificial intelligence.", "word_budget": 320},
-                {"question": "How does this delay real-world power deployment?", "claim_ids": ["c3"], "twist": "2,600 gigawatts of energy are approved and financed, yet trapped waiting for a physical substation plug.", "open_loop": "Here is what happens to electricity prices when that logjam breaks.", "word_budget": 300}
+                {"question": f"What was the real starting point of {topic_name}?", "claim_ids": ["c1"], "twist": f"The common story missed the physical constraint.", "open_loop": f"Which led directly to an unexpected dilemma.", "word_budget": 160},
+                {"question": f"How did the critical constraint in {topic_name} manifest?", "claim_ids": ["c2"], "twist": f"Conventional solutions made the bottleneck more severe.", "open_loop": f"Until an unorthodox mechanism was introduced.", "word_budget": 180},
+                {"question": f"What does {topic_name} reveal about the future?", "claim_ids": ["c3"], "twist": f"The long-term impact extends far beyond the initial event.", "open_loop": f"Here is the definitive verdict.", "word_budget": 160}
             ],
-            "payoff": "The clean energy and AI race will be decided not by chip fabrication or battery chemistry, but by who controls heavy electrical manufacturing.",
-            "close": "If you want to see our deep-dive into the semiconductor water crisis, click here.",
-            "retention_map": ["0:25 Sudden silence + map zoom", "0:55 Onscreen comparison chart reveal", "1:25 Direct challenge question to viewer"]
+            "payoff": f"The climactic synthesis explaining why {topic_name} reshaped its entire domain.",
+            "close": f"A lasting reflection challenging the audience to reconsider how {topic_name} operates.",
+            "retention_map": [f"0:20 - Evidence reveal on {topic_name}", f"0:45 - Mechanism breakdown", f"1:15 - Consequence analysis"]
         })
     elif tag == "scriptwriter":
+        brief = data.get('creative_brief') or {}
+        q = data.get('central_question') or brief.get('central_question') or raw_thesis
+        claims = data.get('verified_claims') or data.get('claims') or [
+            {"id": "c1", "text": f"Primary empirical documentation establishes how {topic_name} operates."},
+            {"id": "c2", "text": f"The decisive constraint governing {topic_name} shaped its trajectory."},
+            {"id": "c3", "text": f"Systemic outcomes confirmed by independent analysis of {topic_name}."}
+        ]
+        c1 = claims[0].get('text') if len(claims) > 0 else f"verified evidence regarding {topic_name}"
+        c2 = claims[1].get('text') if len(claims) > 1 else c1
+        c3 = claims[2].get('text') if len(claims) > 2 else c2
+
         return json.dumps({
-            "title": "The 4-Year Wait Paralyzing the Entire AI Revolution",
+            "title": f"The Untold Reality of {topic_name}",
+            "central_question": q,
+            "narrative_angle": brief.get("chosen_angle", domain_angle),
+            "narrative_form": brief.get("narrative_form", narrative_form),
             "scenes": [
-                {"idx": 1, "narration": "Right now, if you order a utility-scale power transformer, delivery will not happen until 2030.", "on_screen_text": "LEAD TIME: 4+ YEARS", "visual_intent": "Huge industrial substation buzzing with high voltage sparks", "claim_ids": ["c1"], "pace": "normal", "pattern_interrupt": False},
-                {"idx": 2, "narration": "Waiting periods for high voltage units have exploded past two hundred weeks across international grids.", "on_screen_text": "210 WEEKS DELAY", "visual_intent": "Aerial tracking shot across sprawling electric transmission pylons", "claim_ids": ["c1"], "pace": "normal", "pattern_interrupt": True},
-                {"idx": 3, "narration": "The reason comes down to a hyper-specialized metal: grain-oriented electrical steel.", "on_screen_text": "GOES STEEL CHOKEPOINT", "visual_intent": "Close-up microscopic crystalline structure of electrical steel", "claim_ids": ["c2"], "pace": "normal", "pattern_interrupt": False},
-                {"idx": 4, "narration": "Only five manufacturers on Earth have the metallurgical tooling to produce this grade at scale.", "on_screen_text": "5 GLOBAL MANUFACTURERS", "visual_intent": "World map highlighting the five specialized steel manufacturing hubs", "claim_ids": ["c2"], "pace": "slow", "pattern_interrupt": False},
-                {"idx": 5, "narration": "Because of that single material choke, over twenty-six hundred gigawatts of power are now idling in regulatory backlogs.", "on_screen_text": "2,600 GW STUCK", "visual_intent": "Data visualization bar chart showing massive generation capacity trapped", "claim_ids": ["c3"], "pace": "fast", "pattern_interrupt": True},
-                {"idx": 6, "narration": "Capital cannot accelerate heavy metallurgy overnight, meaning whoever controls transformer fabrication controls the pace of computation.", "on_screen_text": "PHYSICAL LIMITS", "visual_intent": "Contrast shot: clean modern server room next to heavy industrial forge", "claim_ids": ["c1", "c3"], "pace": "normal", "pattern_interrupt": False}
+                {
+                    "idx": 1,
+                    "narration": f"When you examine {topic_name}, one decisive question emerges: {q}",
+                    "on_screen_text": topic_name[:24].upper(),
+                    "visual_intent": f"Cinematic wide visual establishing the tangible environment of {topic_name}, authentic lighting and atmosphere",
+                    "claim_ids": ["c1"],
+                    "pace": "normal",
+                    "pattern_interrupt": False
+                },
+                {
+                    "idx": 2,
+                    "narration": f"For decades, surface-level explanations missed the underlying reality: {c1}.",
+                    "on_screen_text": "THE EVIDENCE",
+                    "visual_intent": f"Detailed dynamic breakdown diagram illustrating the fundamental mechanism of {topic_name}",
+                    "claim_ids": ["c1"],
+                    "pace": "normal",
+                    "pattern_interrupt": True
+                },
+                {
+                    "idx": 3,
+                    "narration": f"The real turning point occurred when investigation proved that {c2}.",
+                    "on_screen_text": "TURNING POINT",
+                    "visual_intent": f"Forensic comparative visual showing the critical constraint of {topic_name} in operation",
+                    "claim_ids": ["c2"],
+                    "pace": "slow",
+                    "pattern_interrupt": False
+                },
+                {
+                    "idx": 4,
+                    "narration": f"Because of that structural shift, {c3}, altering every projection that followed.",
+                    "on_screen_text": "STRUCTURAL SHIFT",
+                    "visual_intent": f"High-contrast data visualization revealing the verified consequences of {topic_name}",
+                    "claim_ids": ["c3"],
+                    "pace": "fast",
+                    "pattern_interrupt": True
+                },
+                {
+                    "idx": 5,
+                    "narration": f"Ultimately, {topic_name} proves that real progress is governed not by rhetoric, but by physical and institutional evidence.",
+                    "on_screen_text": "THE VERDICT",
+                    "visual_intent": f"Impactful closing shot summarizing the lasting significance of {topic_name}",
+                    "claim_ids": ["c1", "c3"],
+                    "pace": "normal",
+                    "pattern_interrupt": False
+                }
             ],
-            "total_words": 150,
-            "self_check_notes": "All claims linked to verified citations. No banned phrases present. Short punchy narration beats."
+            "total_words": 135,
+            "self_check_notes": f"Topic fidelity confirmed for '{topic_name}'. Zero banned phrases. All claims verified."
         })
     elif tag == "critic":
         return json.dumps({
             "scores": {
-                "hook_strength": 9,
-                "originality": 9,
-                "clarity": 9,
-                "pacing": 8,
-                "voice_match": 9,
-                "retention_beats": 8
+                "topic_fidelity": 9,
+                "evidence_grounding": 9,
+                "central_question_coverage": 9,
+                "originality": 8,
+                "narrative_progression": 9,
+                "spoken_quality": 9,
+                "hook_strength": 8,
+                "pacing_and_duration": 9
             },
+            "topic_fidelity_score": 9,
+            "evidence_grounding_score": 9,
             "weakest_scenes": [],
-            "rewrite_notes": []
+            "rewrite_notes": [],
+            "specific_critique": [f"Script maintains rigorous focus on '{topic_name}' from start to finish."]
         })
     elif tag == "visuals":
         return json.dumps({
             "shots": [
-                {"scene_idx": 1, "visual_type": "stock", "query_or_spec": "electrical substation high voltage", "weight": 1.0, "motion": "zoom_in", "fallback": "text_card"},
-                {"scene_idx": 2, "visual_type": "stock", "query_or_spec": "transmission towers power grid sunset", "weight": 1.0, "motion": "pan_left", "fallback": "chart"},
-                {"scene_idx": 3, "visual_type": "motion_still", "query_or_spec": "industrial steel manufacturing facility forge", "weight": 1.0, "motion": "zoom_in", "fallback": "text_card"},
-                {"scene_idx": 4, "visual_type": "chart", "query_or_spec": "world map 5 manufacturing countries", "weight": 1.0, "motion": "none", "fallback": "text_card"},
-                {"scene_idx": 5, "visual_type": "chart", "query_or_spec": "bar chart 2600 GW interconnection queue backlog", "weight": 1.0, "motion": "none", "fallback": "text_card"},
-                {"scene_idx": 6, "visual_type": "stock", "query_or_spec": "modern technology datacenter servers", "weight": 1.0, "motion": "pan_right", "fallback": "text_card"}
+                {"scene_idx": 1, "visual_type": "stock", "query_or_spec": f"{topic_name} cinematic setup", "weight": 1.0, "motion": "zoom_in", "fallback": "text_card"},
+                {"scene_idx": 2, "visual_type": "chart", "query_or_spec": f"{topic_name} technical diagram", "weight": 1.0, "motion": "none", "fallback": "text_card"},
+                {"scene_idx": 3, "visual_type": "motion_still", "query_or_spec": f"{topic_name} archival evidence", "weight": 1.0, "motion": "pan_left", "fallback": "text_card"},
+                {"scene_idx": 4, "visual_type": "chart", "query_or_spec": f"{topic_name} data breakdown", "weight": 1.0, "motion": "none", "fallback": "text_card"},
+                {"scene_idx": 5, "visual_type": "stock", "query_or_spec": f"{topic_name} conclusion shot", "weight": 1.0, "motion": "zoom_out", "fallback": "text_card"}
             ]
         })
     elif tag == "metadata":
         return json.dumps({
-            "title_primary": "The 4-Year Wait Paralyzing the Entire AI Revolution",
+            "title_primary": f"The Untold Reality of {topic_name}",
             "title_variants": [
-                "Why the Global Power Grid Has Run Out of Transformers",
-                "The Heavy Metal Bottleneck That Will Delay AI to 2030"
+                f"How {topic_name} Actually Works",
+                f"The Hidden Turning Point of {topic_name}"
             ],
-            "description": "High-voltage transformer lead times have reached four years, stalling thousands of gigawatts of new clean energy and data centers.\n\nChapters:\n0:00 - The 210-Week Wait\n0:30 - The GOES Steel Monopoly\n1:00 - 2,600 Gigawatts Idling\n\nSources:\n- https://gov.example.com/energy-grid-report\n- https://gov.example.com/lbl-queue-study\n- https://example.org/materials-index",
+            "description": f"A comprehensive, evidence-grounded investigation into {topic_name}.\n\nKey Insights:\n- The physical and systemic mechanisms.\n- The overlooked structural constraints.\n- The verifiable long-term outcomes.\n\nCentral Question: {raw_thesis}",
             "chapter_scene_idx": [1, 3, 5],
-            "chapter_titles": ["The 210-Week Wait", "The GOES Steel Monopoly", "2,600 Gigawatts Idling"],
-            "hashtags": ["#AI", "#EnergyGrid", "#Economics"],
-            "tags": ["artificial intelligence", "power grid", "transformers", "renewable energy", "substation"],
-            "thumbnail_text_options": ["THE 4-YEAR CHOKE", "GRID LOCKED", "THE HIDDEN CEILING"],
-            "pinned_comment": "Did you realize electrical steel was this concentrated? Share your thoughts below."
+            "chapter_titles": ["The Core Question", "The Turning Point", "The Verdict"],
+            "hashtags": [f"#{topic_name.replace(' ', '')[:15]}", "#Analysis", "#DeepDive"],
+            "tags": [topic_name.lower(), "documentary", "investigation", "analysis"],
+            "thumbnail_text_options": [f"{topic_name[:14].upper()}", "UNCOVERED", "THE VERDICT"],
+            "pinned_comment": f"What was your biggest surprise about {topic_name}? Let us know below."
         })
     return "{}"

@@ -1,33 +1,56 @@
-Task: write the full, captivating script from the story outline and verified claims.
+Task: Write a full, compelling, topic-driven script based on the Writing Brief, Creative Brief, Research Dossier, and Verified Claims.
 
-SCRIPTWRITING RULES FOR HIGH-RETENTION VIRAL VIDEOS:
-1. Write for the ear: Short, punchy sentences, active verbs, natural rhythm (140 to 160 wpm).
-2. The Hook (Scene 1): First sentence MUST be a dramatic hook, bizarre dilemma, or vivid scenario ("Imagine waking up to...", "Inside a fortified vault in Zurich...", "There is a 400-ton titan hiding in plain sight..."). Never say "Hello", "Welcome back", or boring introductions.
-3. Engaging Storytelling Tone: Use suspense, sensory details, and colorful analogies. Keep the viewer at the edge of their seat.
-4. Each scene must be 6 to 15 seconds long with:
-   - "idx": sequential integer
-   - "narration": punchy conversational script line
-   - "on_screen_text": 2-4 words highlighted for maximum kinetic emphasis
-   - "visual_intent": detailed cartoon/illustration scene prompt (e.g. "Vibrant 2D cartoon illustration of an exhausted worker staring at a gigantic smoking mechanical gear in a futuristic power station, Pixar animation style, colorful and expressive")
-   - "claim_ids": array of claim IDs referenced
-   - "pace": "slow", "normal", or "fast"
-   - "pattern_interrupt": boolean true on climax or dramatic shift
-5. Strictly forbidden phrases: "in today's video", "without further ado", "let's dive in", "game-changer", "in conclusion", "buckle up".
+THE 8 CORE PRIORITIES:
 
-Return JSON:
+Priority 1: Topic Fidelity
+Every single scene must directly advance the central question or illuminate a meaningful dimension of the requested topic. The script must remain recognizably and relentlessly about the exact subject throughout—never drifting into generic generalities or broad industry platitudes.
+
+Priority 2: Evidence & Grounding
+Ground every major statement in the verified claims and research dossier provided. Never invent facts, statistics, historical dates, scientific figures, quotes, or corporate names. Weave claims naturally into conversational narration using precise details.
+
+Priority 3: Originality & Perspective
+Adopt the narrative form and unique angle established in the Creative Brief. Do not rely on canned cliches or copy source material word-for-word. Synthesize facts into a fresh, original explanation.
+
+Priority 4: Narrative Progression
+Each scene must introduce new information, deepen the viewer's understanding, or escalate the central inquiry. Never repeat the same point in different words. Use natural transitions grounded in causality ("Because of this...", "Which meant that...", "The consequence was immediate...").
+
+Priority 5: Audience Engagement & Specificity
+Engage through concrete examples, tangible physical realities, and meaningful stakes—never cheap clickbait. Avoid formulaic openings ("Imagine waking up...", "Inside a vault..."). Instead, immediately immerse the listener into the core dilemma, paradox, or reality of this exact topic.
+
+Priority 6: Spoken-Word Quality (Writing for the Ear)
+Write for human listening, not academic reading.
+- Vary sentence rhythms: mix short, punchy statements with descriptive explanations.
+- Conversational, authoritative, and engaging tone matching the channel persona.
+- Explain technical or scientific terms effortlessly in context.
+- Avoid all prohibited phrases: "in today's video", "without further ado", "let's dive in", "game-changer", "in conclusion", "buckle up".
+
+Priority 7: Pacing & Word Budget
+Adhere to the target word budget (calculated at ~145-155 words per minute of target duration). Ensure each scene represents approximately 8 to 18 seconds of spoken dialogue.
+
+Priority 8: Downstream Compatibility & Clean Separation
+- "narration": MUST contain ONLY clean spoken words for the voiceover artist. NEVER include camera directions, SFX brackets [Sound of bell], URLs, markdown formatting, or production notes inside "narration".
+- "on_screen_text": 2 to 4 high-impact words for kinetic visual subtitles.
+- "visual_intent": Detailed visual instruction describing what is seen on screen for the Visual Planner.
+- "claim_ids": Array of claim IDs referenced in this scene (e.g. ["c1"]).
+- "pace": "slow", "normal", or "fast".
+- "pattern_interrupt": boolean true on major narrative shifts or revelations.
+
+Return valid JSON:
 {
-  "title": "Engaging Viral Story Title",
+  "title": "Topic-Driven Script Title",
+  "central_question": "The central question answered by this script",
+  "narrative_angle": "The narrative approach utilized",
   "scenes": [
     {
       "idx": 1,
-      "narration": "...",
-      "on_screen_text": "...",
-      "visual_intent": "Vibrant cartoon illustration of...",
+      "narration": "Direct, captivating spoken opening grounded in the topic's reality.",
+      "on_screen_text": "PUNCHY TEXT",
+      "visual_intent": "Vivid cinematic visual description for rendering.",
       "claim_ids": ["c1"],
       "pace": "normal",
       "pattern_interrupt": false
     }
   ],
   "total_words": 150,
-  "self_check_notes": "All claim IDs verified, retention hook in scene 1."
+  "self_check_notes": "Topic fidelity confirmed. Zero banned phrases. All factual claims tied to verified citations."
 }

@@ -1,33 +1,57 @@
-Task: turn the verified story claims and thesis into a high-retention 5-beat story outline.
+Task: Transform the topic, thesis, research findings, and verified claims into a cohesive, topic-driven story architecture and creative brief.
 
-STORYTELLING BLUEPRINT:
-1. Beat 1 - The 3-Second Hook: A shocking dilemma, visual paradox, or impossible question that stops the scroll immediately.
-2. Beat 2 - The Conflict / The Impossible Problem: Introduce the stakes, the protagonist's struggle, or the hidden crisis.
-3. Beat 3 - The Clue / The Investigation: Uncover the unexpected truth through vivid analogies, colorful explanations, and numerical reveals.
-4. Beat 4 - The Climax / The Plot Twist: The mind-blowing revelation that overturns what the audience thought they knew.
-5. Beat 5 - The Resolution / The Epic Takeaway: The lingering takeaway or moral that makes the viewer subscribe and share.
+CORE PRINCIPLE:
+Do not force every video into the same cookie-cutter template. Tailor the narrative architecture directly to the subject matter. Choose an appropriate narrative form:
+- Scientific Explanation (for science, nature, physics, or biology)
+- Historical Reconstruction (for history, archaeology, or origins)
+- Engineering / System Analysis (for complex machines, aerospace, computing, infrastructure)
+- Investigative Storytelling / Case Study (for business, economics, crimes, or corporate sagas)
+- Problem-Solving / Chronological Journey (for discoveries, dilemmas, or biographical events)
 
-RETENTION RULES:
-- Add a pattern interrupt (dramatic sound effect cue, sudden visual style shift, character reaction shot, or bold question) every 15-20 seconds.
-- Total word budget: target_minutes * 140-150 words.
+REQUIREMENTS:
+1. Formulate a Topic-Specific Creative Brief:
+   - "core_premise": Crisp statement of the underlying reality or paradox.
+   - "central_question": The driving inquiry the viewer needs answered.
+   - "narrative_form": One of the tailored forms above.
+   - "chosen_angle": The specific lens that makes this subject immediately compelling.
+   - "key_insights": 3-5 concrete discoveries, milestones, or mechanisms grounded in the verified claims.
+   - "target_audience_takeaway": What the audience understands by the end.
+   - "what_makes_it_interesting": The counterintuitive, surprising, or high-stakes element.
+   - "cliches_to_avoid": Generic buzzwords, vague summaries, or irrelevant broad categories.
 
-Return JSON:
+2. Structure Story Acts:
+   - Each act must advance the central question with real evidence from the research dossier.
+   - Link each act to specific claim_ids.
+   - Define a substantive question, causal twist, and open loop for each act.
+   - Allocate word budgets proportional to complexity (total: target_minutes * 140-150 words).
+
+3. Pacing & Retention:
+   - The hook must be an immediate immersion into the specific topic—NOT a canned generic metaphor.
+   - The payoff must resolve or synthesize the central question.
+
+Return JSON matching Outline schema:
 {
-  "hook_idea": "The first 3 seconds visual and narration hook",
+  "hook_idea": "Topic-specific visual and spoken hook exploring the central dilemma",
+  "creative_brief": {
+    "core_premise": "...",
+    "central_question": "...",
+    "narrative_form": "scientific_explanation",
+    "chosen_angle": "...",
+    "key_insights": ["Insight 1 with evidence", "Insight 2 with evidence", "Insight 3 with evidence"],
+    "target_audience_takeaway": "...",
+    "what_makes_it_interesting": "...",
+    "cliches_to_avoid": ["vague generalities", "ignoring engineering specifics"]
+  },
   "acts": [
     {
-      "question": "The driving question for this story beat",
-      "claim_ids": ["c1", "c2"],
-      "twist": "The mini-twist or tension spike in this beat",
-      "open_loop": "The unanswered cliffhanger leading into the next scene",
-      "word_budget": 180
+      "question": "Substantive question for Beat 1",
+      "claim_ids": ["c1"],
+      "twist": "The causal turn or unexpected constraint",
+      "open_loop": "The logical next question that pushes the viewer forward",
+      "word_budget": 160
     }
   ],
-  "payoff": "The climactic revelation and visual climax",
-  "close": "The memorable conclusion and final call to action",
-  "retention_map": [
-    "0:15 - Sudden visual shift to glowing neon schematic",
-    "0:30 - Bold numeric pop-up counter",
-    "0:45 - High-tension character reaction beat"
-  ]
+  "payoff": "Climactic synthesis of the core mechanism or resolution",
+  "close": "Memorable conclusion reinforcing the central thesis",
+  "retention_map": ["0:20 - Evidence reveal", "0:45 - Mechanism breakdown"]
 }

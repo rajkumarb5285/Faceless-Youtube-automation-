@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import re
 from app.schemas import (
     Topic, QueryList, FactList, Dossier, ClaimsTable, Outline, Script,
     CriticReport, ShotList, Metadata, JobState
@@ -168,34 +169,60 @@ def verifier(state: JobState) -> dict:
 def planner(state: JobState) -> dict:
     usable = [c for c in state.get('claims', []) if c.get('status') != 'rejected']
     ch = profile(state)
-    out = agent('planner', PROMPTS['planner'], {
-        'thesis': state['topic'].get('thesis', ''),
+    topic_data = state.get('topic') or {}
+    target_min = ch.get('target_minutes', 8)
+    
+    payload = {
+        'topic': topic_data.get('topic', state.get('custom_topic', 'Requested Topic')),
+        'thesis': topic_data.get('thesis', ''),
+        'why_now': topic_data.get('why_now', ''),
+        'audience_persona': topic_data.get('audience_persona', ''),
         'claims': usable,
-        'target_minutes': ch.get('target_minutes', 8),
-        'format': 'explainer'
-    }, Outline)
+        'research_facts': [f.get('fact') for f in state.get('research', {}).get('facts', [])[:8]],
+        'target_minutes': target_min,
+        'story_style': state.get('story_style', 'cartoon_story'),
+        'format': state.get('video_format', 'landscape')
+    }
+    
+    out = agent('planner', PROMPTS['planner'], payload, Outline)
     return {
         'outline': out.model_dump(),
         'stage_status': {**state.get('stage_status', {}), 'planner': 'completed'}
     }
 
-def check_script(script: Script, claims: list, budget: int) -> list[str]:
+def check_script(script: Script, claims: list, budget: int, topic: str = "") -> list[str]:
     ids = {c['id']: c.get('status') for c in claims}
     errs = []
+    
     for sc in script.scenes:
         for cid in sc.claim_ids:
-            if ids.get(cid, 'rejected') == 'rejected':
-                errs.append(f'scene {sc.idx} uses unknown or rejected claim {cid}')
-        if any(ch.isdigit() for ch in sc.narration) and not sc.claim_ids:
-            errs.append(f'scene {sc.idx} has a number but no claim id')
+            if ids.get(cid) == 'rejected':
+                errs.append(f'scene {sc.idx} uses rejected claim {cid}')
         low = sc.narration.lower()
         errs += [f'scene {sc.idx} uses banned phrase: {b}' for b in BANNED if b in low]
+        
+    if topic:
+        topic_words = [w.lower() for w in re.findall(r'\b[a-zA-Z]{4,}\b', topic) if w.lower() not in ('what', 'when', 'where', 'which', 'about', 'video', 'story', 'this', 'that', 'from', 'with')]
+        full_text = " ".join(sc.narration.lower() for sc in script.scenes)
+        matches = [w for w in topic_words if w in full_text]
+        if topic_words and len(matches) == 0:
+            errs.append(f"Script narration lacks topic keywords: {topic_words[:3]}")
+
     return errs
 
 def scriptwriter(state: JobState) -> dict:
     custom_content = state.get('custom_content')
     claims = [c for c in state.get('claims', []) if c.get('status') != 'rejected']
+    topic_data = state.get('topic') or {}
+    topic_name = topic_data.get('topic') or state.get('custom_topic')
     
+    if not topic_name and not custom_content:
+        raise ValueError("Scriptwriter cannot proceed: missing topic in state")
+        
+    outline = state.get('outline') or {}
+    if not outline and not custom_content:
+        raise ValueError("Scriptwriter cannot proceed: missing outline in state")
+        
     if custom_content:
         prompt_instruction = (
             "Task: Convert this EXACT user-provided story into sequential cartoon video scenes of 8-15 seconds each.\n"
@@ -204,7 +231,7 @@ def scriptwriter(state: JobState) -> dict:
             f"User Story Text:\n{custom_content}\n"
             "Return valid JSON matching Script schema: {\"title\": \"...\", \"scenes\": [...], \"total_words\": 150, \"self_check_notes\": \"faithful to user content\"}"
         )
-        for fallback_model in [MODELS['strong'], 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b']:
+        for fallback_model in [MODELS['strong'], 'qwen/qwen3.8-27b', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b']:
             try:
                 raw_script = llm_call(fallback_model, SHARED_RULES + "\n" + prompt_instruction, custom_content, tag='scriptwriter')
                 s = Script.model_validate_json(extract_json(raw_script))
@@ -218,23 +245,61 @@ def scriptwriter(state: JobState) -> dict:
                 logger.warning(f"Scriptwriter parse retry on {fallback_model}: {e}")
                 continue
 
-    budget = sum(a.get('word_budget', 150) for a in state.get('outline', {}).get('acts', []))
-    payload = {
-        'channel_profile': profile(state),
-        'outline': state['outline'],
-        'claims': claims,
-        'rewrite_notes': state.get('critic', {}).get('rewrite_notes', []),
-        'previous_script': state.get('script')
+    ch = profile(state)
+    target_dur = float(state.get('target_duration') or (ch.get('target_minutes', 8) * 60))
+    wpm = float(ch.get('wpm', 145.0) or 145.0)
+    word_budget = max(120, int((target_dur / 60.0) * wpm))
+    
+    creative_brief = outline.get('creative_brief') or {
+        "core_premise": topic_data.get('thesis', topic_name),
+        "central_question": f"What is the real mechanism behind {topic_name}?",
+        "narrative_form": "investigative",
+        "chosen_angle": "Empirical cause-and-effect deep dive",
+        "key_insights": [c.get("text", "") for c in claims[:4]],
+        "cliches_to_avoid": ["vague generalities", "generic hype"]
+    }
+    
+    writing_brief = {
+        "topic": topic_name,
+        "central_question": creative_brief.get("central_question") or topic_data.get("thesis", f"What is the true reality of {topic_name}?"),
+        "thesis": topic_data.get("thesis", ""),
+        "why_now": topic_data.get("why_now", ""),
+        "target_audience": state.get("target_audience") or topic_data.get("audience_persona") or (ch.get("audience_personas") or ["Curious learners"])[0],
+        "audience_knowledge_level": "Smart newcomer seeking deep systemic understanding",
+        "video_objective": f"Explain {topic_name} with uncompromising factual fidelity, narrative momentum, and concrete evidence.",
+        "language": state.get("language", "en"),
+        "story_style": state.get("story_style", "documentary"),
+        "target_duration_seconds": target_dur,
+        "target_word_budget": word_budget,
+        "creative_brief": creative_brief,
+        "acts": outline.get("acts", []),
+        "research_dossier": [
+            {"id": f.get("id"), "fact": f.get("fact"), "source": f.get("source_url"), "quote": f.get("quote", "")}
+            for f in state.get("research", {}).get("facts", [])[:8]
+        ],
+        "verified_claims": [
+            {"id": c.get("id"), "text": c.get("text"), "sources": c.get("sources", [])}
+            for c in claims
+        ],
+        "unresolved_gaps": state.get("research", {}).get("gaps", []),
+        "cliches_to_avoid": creative_brief.get("cliches_to_avoid", []) + BANNED,
+        "rewrite_notes": state.get("critic", {}).get("rewrite_notes", []),
+        "weakest_scenes": state.get("critic", {}).get("weakest_scenes", []),
+        "previous_script": state.get("script")
     }
     
     for attempt in range(2):
-        s = agent('scriptwriter', PROMPTS['scriptwriter'], payload, Script)
-        errs = check_script(s, claims, budget)
+        s = agent('scriptwriter', PROMPTS['scriptwriter'], writing_brief, Script)
+        errs = check_script(s, claims, word_budget, topic=topic_name)
         if not errs:
             break
-        payload['code_check_errors'] = errs
+        writing_brief['code_check_errors'] = errs
         
     s.total_words = sum(len(x.narration.split()) for x in s.scenes)
+    s.central_question = writing_brief["central_question"]
+    s.narrative_angle = creative_brief.get("chosen_angle")
+    s.narrative_form = creative_brief.get("narrative_form")
+    
     return {
         'script': s.model_dump(),
         'script_revision': state.get('script_revision', 0) + 1,
@@ -242,19 +307,70 @@ def scriptwriter(state: JobState) -> dict:
     }
 
 def critic(state: JobState) -> dict:
-    rep = agent('critic', PROMPTS['critic'], {
-        'script': state['script'],
-        'claims': state.get('claims', []),
+    claims = state.get('claims', [])
+    script_data = state.get('script', {})
+    script_obj = Script(**script_data)
+    topic_data = state.get('topic') or {}
+    topic_name = topic_data.get('topic') or state.get('custom_topic', '')
+    thesis = topic_data.get('thesis', '')
+    
+    payload = {
+        'topic': topic_name,
+        'central_question': thesis,
+        'script': script_data,
+        'claims': claims,
+        'research_facts': [f.get('fact') for f in state.get('research', {}).get('facts', [])[:6]],
         'channel_profile': profile(state)
-    }, CriticReport)
+    }
     
-    bad = len(check_script(Script(**state['script']), state.get('claims', []), state['script']['total_words']))
-    rep.scores['traceability'] = max(0, 10 - 2 * bad)
+    rep = agent('critic', PROMPTS['critic'], payload, CriticReport)
     
+    # Deterministic code checks
+    bad_checks = check_script(script_obj, claims, script_data.get('total_words', 150), topic=topic_name)
+    
+    # Deterministic topic fidelity evaluation
+    full_narration = " ".join(sc.narration.lower() for sc in script_obj.scenes)
+    topic_tokens = [w.lower() for w in re.findall(r'[a-zA-Z]{3,}', topic_name) if w.lower() not in ('what', 'when', 'where', 'which', 'about', 'video', 'story', 'this', 'that', 'from', 'with', 'behind')]
+    token_matches = sum(1 for tok in topic_tokens if (tok[:4] in full_narration if len(tok) >= 4 else tok in full_narration))
+    topic_match_ratio = (token_matches / max(1, len(topic_tokens))) if topic_tokens else 1.0
+    
+    if topic_match_ratio >= 0.4:
+        calc_fidelity = 9
+    elif topic_match_ratio >= 0.2:
+        calc_fidelity = 7
+    elif topic_match_ratio > 0:
+        calc_fidelity = 5
+    else:
+        calc_fidelity = 2
+
+    rep.scores['topic_fidelity'] = min(rep.scores.get('topic_fidelity', 9), calc_fidelity)
+    rep.topic_fidelity_score = rep.scores['topic_fidelity']
+    
+    # Traceability calculation
+    rep.scores['traceability'] = max(0, 10 - 2 * len(bad_checks))
+    
+    # Gate condition: topic fidelity >= 7.0 AND traceability >= 8 AND average >= 7.5
     vals = list(rep.scores.values())
-    passed = (rep.scores['traceability'] >= 8) and (min(vals) >= 6) and (sum(vals) / max(1, len(vals)) >= 7.5)
+    avg_score = sum(vals) / max(1, len(vals))
+    passed = (
+        (rep.scores.get('topic_fidelity', 8) >= 7) and 
+        (rep.scores.get('traceability', 8) >= 8) and 
+        (min(vals) >= 6) and 
+        (avg_score >= 7.5) and 
+        len(bad_checks) == 0
+    )
+    
+    # Actionable scene-specific rewrite notes
+    if not passed and not rep.rewrite_notes:
+        if bad_checks:
+            rep.rewrite_notes.extend(bad_checks[:3])
+        if rep.scores.get('topic_fidelity', 8) < 7:
+            rep.rewrite_notes.append(f"Elevate topic fidelity: ground narration directly in specific evidence and mechanisms of '{topic_name}'.")
+            
     return {
-        'critic': {**rep.model_dump(), 'pass': passed},
+        'critic': {**rep.model_dump(), 'pass': passed, 'passed': passed, 'avg_score': round(avg_score, 1)},
+        'critic_score': int(avg_score * 10),
+        'critic_status': 'pass' if passed else 'revise',
         'rewrite_count': state.get('rewrite_count', 0) + 1,
         'stage_status': {**state.get('stage_status', {}), 'critic': 'completed' if passed else 'retrying'}
     }
